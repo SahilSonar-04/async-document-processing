@@ -1,0 +1,43 @@
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.so
+.venv/
+venv/
+env/
+
+# ── Node ────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# ── IDE ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Docker ──────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Env ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Uploads / runtime data ──────────────────────────────────
+uploads/
+sample_files/
+sample_exports/
