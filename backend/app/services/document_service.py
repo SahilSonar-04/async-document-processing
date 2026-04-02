@@ -60,7 +60,8 @@ class DocumentService:
 
         job = Job(document_id=document.id, status=JobStatus.QUEUED, progress=0)
         db.add(job)
-        await db.flush()
+        # Commit so the job exists in DB before the worker picks it up
+        await db.commit()
 
         # ── Enqueue Celery task ───────────────────────────────────────
         task = process_document_task.delay(
@@ -71,7 +72,7 @@ class DocumentService:
             ext,
         )
         job.celery_task_id = task.id
-        await db.flush()
+        await db.commit()
 
         return document, job
 
@@ -156,7 +157,7 @@ class DocumentService:
         job.retry_count += 1
         job.completed_at = None
 
-        await db.flush()
+        await db.commit()
 
         task = process_document_task.delay(
             str(job.id),
@@ -166,7 +167,7 @@ class DocumentService:
             job.document.file_type,
         )
         job.celery_task_id = task.id
-        await db.flush()
+        await db.commit()
 
         return job
 

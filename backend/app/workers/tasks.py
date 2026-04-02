@@ -38,6 +38,8 @@ def _emit(job_id: str, event: str, progress: int, stage: str, message: str = "")
 
 def _update_job(session: Session, job_id: str, **kwargs) -> Job:
     job = session.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise ValueError(f"Job {job_id} not found in database")
     for k, v in kwargs.items():
         setattr(job, k, v)
     session.commit()
