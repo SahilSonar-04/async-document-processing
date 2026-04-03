@@ -16,7 +16,7 @@ services:
     env: python
     plan: free
     buildCommand: "cd backend && pip install -r requirements.txt"
-    startCommand: 'export DATABASE_URL=${DATABASE_URL/postgresql/postgresql+asyncpg} && export SYNC_DATABASE_URL=${DATABASE_URL/postgresql+asyncpg/postgresql+psycopg2} && cd backend && (celery -A app.workers.celery_app worker --loglevel=info &) && uvicorn app.main:app --host 0.0.0.0 --port $PORT'
+    startCommand: 'cd backend && bash start.sh'
 
     envVars:
       - key: DATABASE_URL
