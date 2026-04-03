@@ -19,7 +19,10 @@ export function useSSE(jobId: string | null, enabled = true) {
       esRef.current.close();
     }
 
-    const es = new EventSource(`/api/v1/jobs/${jobId}/progress`);
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL
+      ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+      : "";
+    const es = new EventSource(`${baseUrl}/api/v1/jobs/${jobId}/progress`);
     esRef.current = es;
 
     es.onmessage = (e) => {
@@ -88,7 +91,10 @@ export function useMultiSSE(jobIds: string[]) {
     for (const jobId of jobIds) {
       if (esRefs.current.has(jobId)) continue;
 
-      const es = new EventSource(`/api/v1/jobs/${jobId}/progress`);
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL
+        ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+        : "";
+      const es = new EventSource(`${baseUrl}/api/v1/jobs/${jobId}/progress`);
       esRefs.current.set(jobId, es);
 
       es.onmessage = (e) => {

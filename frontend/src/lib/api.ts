@@ -8,8 +8,12 @@ import type {
   JobFilters,
 } from "@/types";
 
+const baseUrl = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")}/api/v1`
+  : "/api/v1";
+
 const api = axios.create({
-  baseURL: "/api/v1",
+  baseURL: baseUrl,
   timeout: 30000,
 });
 
@@ -89,7 +93,10 @@ export async function finalizeResult(jobId: string): Promise<ProcessingResult> {
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export function getExportUrl(format: "json" | "csv", finalizedOnly = false): string {
-  return `/api/v1/export/${format}?finalized_only=${finalizedOnly}`;
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL
+    ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")}/api/v1`
+    : "/api/v1";
+  return `${baseUrl}/export/${format}?finalized_only=${finalizedOnly}`;
 }
 
 export default api;
