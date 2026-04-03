@@ -17,10 +17,7 @@ services:
     plan: free
     buildCommand: "cd backend && pip install -r requirements.txt"
     startCommand: 'export DATABASE_URL=${DATABASE_URL/postgresql/postgresql+asyncpg} && export SYNC_DATABASE_URL=${DATABASE_URL/postgresql+asyncpg/postgresql+psycopg2} && cd backend && (celery -A app.workers.celery_app worker --loglevel=info &) && uvicorn app.main:app --host 0.0.0.0 --port $PORT'
-    disk:
-      name: uploads-volume
-      mountPath: /data/uploads
-      sizeGB: 1
+
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -46,6 +43,6 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: UPLOAD_DIR
-        value: /data/uploads
+        value: /tmp/uploads
       - key: CORS_ORIGINS
         value: '["http://localhost:3000"]' # 🚨 IMPORTANT: Update this to your deployed Vercel URL later!
