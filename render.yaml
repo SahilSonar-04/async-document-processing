@@ -1,0 +1,51 @@
+databases:
+  - name: docflow-db
+    databaseName: docflow_db
+    user: docflow
+    plan: free
+
+services:
+  - type: redis
+    name: docflow-redis
+    plan: free
+    ipAllowList: [] # internal only
+    maxmemoryPolicy: noeviction
+
+  - type: web
+    name: docflow-backend
+    env: python
+    plan: free
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    startCommand: 'export DATABASE_URL=${DATABASE_URL/postgresql/postgresql+asyncpg} && export SYNC_DATABASE_URL=${DATABASE_URL/postgresql+asyncpg/postgresql+psycopg2} && cd backend && (celery -A app.workers.celery_app worker --loglevel=info &) && uvicorn app.main:app --host 0.0.0.0 --port $PORT'
+    disk:
+      name: uploads-volume
+      mountPath: /data/uploads
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: docflow-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: docflow-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: docflow-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: docflow-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENVIRONMENT
+        value: production
+      - key: UPLOAD_DIR
+        value: /data/uploads
+      - key: CORS_ORIGINS
+        value: '["http://localhost:3000"]' # 🚨 IMPORTANT: Update this to your deployed Vercel URL later!
