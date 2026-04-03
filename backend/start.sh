@@ -14,7 +14,7 @@ if [[ "$DATABASE_URL" == postgres://* ]] || [[ "$DATABASE_URL" == postgresql://*
 fi
 
 echo "Starting Celery worker in the background..."
-celery -A app.workers.celery_app worker --loglevel=info &
+celery -A app.workers.celery_app worker --pool=solo --loglevel=info &
 
 echo "Starting main FastAPI server..."
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
