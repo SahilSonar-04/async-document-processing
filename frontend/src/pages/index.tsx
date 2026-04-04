@@ -8,7 +8,7 @@ import { Spinner } from "@/components/Spinner";
 import { useJobs } from "@/hooks/useJobs";
 import { useMultiSSE } from "@/hooks/useSSE";
 import { useJobStore } from "@/store/jobStore";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 export default function Dashboard() {
   const { jobs, total, pages, isLoading, listError, refresh } = useJobs();
@@ -20,16 +20,28 @@ export default function Dashboard() {
     .map((j) => j.id);
   useMultiSSE(activeJobIds);
 
-  // Auto-refresh list when active jobs finish (progress hits terminal)
+  // ✅ FIX: Track which job IDs we've already scheduled a refresh for,
+  // so we don't schedule N refreshes as the `progress` object keeps updating.
+  const refreshedJobs = useRef<Set<string>>(new Set());
+
   const progress = useJobStore((s) => s.progress);
   useEffect(() => {
-    const terminalEvents = Object.values(progress).filter(
-      (p) => p.event === "job_completed" || p.event === "job_failed"
-    );
-    if (terminalEvents.length > 0) {
-      const timer = setTimeout(refresh, 1000);
-      return () => clearTimeout(timer);
+    let needsRefresh = false;
+
+    for (const [jobId, p] of Object.entries(progress)) {
+      if (
+        (p.event === "job_completed" || p.event === "job_failed") &&
+        !refreshedJobs.current.has(jobId)
+      ) {
+        refreshedJobs.current.add(jobId);
+        needsRefresh = true;
+      }
     }
+
+    if (!needsRefresh) return;
+
+    const timer = setTimeout(refresh, 1000);
+    return () => clearTimeout(timer);
   }, [progress, refresh]);
 
   return (
@@ -65,8 +77,12 @@ export default function Dashboard() {
 
       {/* Job list */}
       {isLoading && jobs.length === 0 ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex flex-col items-center justify-center py-20 gap-3">
           <Spinner className="w-8 h-8" />
+          {/* Helpful hint for Render free-tier cold starts (~30s wake time) */}
+          <p className="text-sm text-gray-400">
+            Loading… if this takes a moment, the server may be waking up.
+          </p>
         </div>
       ) : listError ? (
         <div className="text-center py-20">

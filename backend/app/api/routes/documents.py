@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import logging
+import uuid as uuid_lib
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException
@@ -207,7 +208,7 @@ async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
             if not event_payload:
                 try:
                     result = await db.execute(
-                        select(Job).where(Job.id == job_id)  # type: ignore[arg-type]
+                        select(Job).where(Job.id == uuid_lib.UUID(job_id))
                     )
                     job_row = result.scalar_one_or_none()
                     if job_row:
