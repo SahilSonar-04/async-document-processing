@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import type {
   Job,
   JobListResponse,
@@ -14,15 +14,27 @@ const baseUrl = process.env.NEXT_PUBLIC_API_URL
 
 const api = axios.create({
   baseURL: baseUrl,
-  timeout: 30000,
+  // ✅ FIX: Render free tier can take ~30s to wake from sleep.
+  // 60s gives it time to wake + respond without a spurious timeout error.
+  timeout: 60_000,
 });
 
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
+  (err: AxiosError) => {
+    // Detect Render cold-start timeout specifically so the UI can show a helpful message
+    if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+      return Promise.reject(
+        new Error(
+          "The server is waking up from sleep — this can take ~30 seconds on the free tier. " +
+          "Please try again in a moment."
+        )
+      );
+    }
+
     const msg =
-      err.response?.data?.detail ||
-      err.response?.data?.message ||
+      (err.response?.data as { detail?: string; message?: string })?.detail ||
+      (err.response?.data as { detail?: string; message?: string })?.message ||
       err.message ||
       "An unexpected error occurred";
     return Promise.reject(new Error(msg));
@@ -93,10 +105,10 @@ export async function finalizeResult(jobId: string): Promise<ProcessingResult> {
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export function getExportUrl(format: "json" | "csv", finalizedOnly = false): string {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL
+  const base = process.env.NEXT_PUBLIC_API_URL
     ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")}/api/v1`
     : "/api/v1";
-  return `${baseUrl}/export/${format}?finalized_only=${finalizedOnly}`;
+  return `${base}/export/${format}?finalized_only=${finalizedOnly}`;
 }
 
 export default api;

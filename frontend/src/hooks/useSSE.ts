@@ -10,14 +10,17 @@ export function useSSE(jobId: string | null, enabled = true) {
   const setSelectedJob = useJobStore((s) => s.setSelectedJob);
   const selectedJob = useJobStore((s) => s.selectedJob);
   const esRef = useRef<EventSource | null>(null);
+  // ✅ FIX: track whether we've already reacted to a terminal event
+  const doneRef = useRef(false);
 
   useEffect(() => {
     if (!jobId || !enabled) return;
 
-    // Close any existing connection for this job
-    if (esRef.current) {
-      esRef.current.close();
-    }
+    // Reset done-guard whenever jobId/enabled changes
+    doneRef.current = false;
+
+    // Close any stale connection before opening a new one
+    esRef.current?.close();
 
     const baseUrl = process.env.NEXT_PUBLIC_API_URL
       ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
@@ -26,14 +29,13 @@ export function useSSE(jobId: string | null, enabled = true) {
     esRef.current = es;
 
     es.onmessage = (e) => {
+      if (doneRef.current) return; // ignore late messages after terminal event
       try {
         const event: ProgressEvent = JSON.parse(e.data);
 
-        // Update progress store
         updateProgress(jobId, event);
 
-        // Derive status from terminal events
-        let statusPatch: Partial<{ status: JobStatus; progress: number; current_stage: string }> = {
+        const statusPatch: Partial<{ status: JobStatus; progress: number; current_stage: string }> = {
           progress: event.progress,
           current_stage: event.stage ?? undefined,
         };
@@ -49,13 +51,12 @@ export function useSSE(jobId: string | null, enabled = true) {
 
         updateJobInList(jobId, statusPatch);
 
-        // Also patch the detail view if open
         if (selectedJob?.id === jobId) {
           setSelectedJob({ ...selectedJob, ...statusPatch });
         }
 
-        // Close stream on terminal event
         if (TERMINAL_EVENTS.has(event.event)) {
+          doneRef.current = true;
           es.close();
           esRef.current = null;
         }
@@ -65,11 +66,15 @@ export function useSSE(jobId: string | null, enabled = true) {
     };
 
     es.onerror = () => {
-      es.close();
-      esRef.current = null;
+      // Don't reconnect if we already hit a terminal event
+      if (!doneRef.current) {
+        es.close();
+        esRef.current = null;
+      }
     };
 
     return () => {
+      // Cleanup: close this specific connection only
       es.close();
       esRef.current = null;
     };
@@ -79,17 +84,33 @@ export function useSSE(jobId: string | null, enabled = true) {
 
 /**
  * Hook to watch multiple active jobs simultaneously.
- * Fires up one SSE connection per active job.
+ *
+ * FIX: The cleanup function now only closes connections for jobs that have
+ * been *removed* from the list, not all connections indiscriminately.
+ * The React effect cleanup (return fn) only fires on unmount.
  */
 export function useMultiSSE(jobIds: string[]) {
   const updateProgress = useJobStore((s) => s.updateProgress);
   const updateJobInList = useJobStore((s) => s.updateJobInList);
   const esRefs = useRef<Map<string, EventSource>>(new Map());
+  // Track jobs that have completed so we don't reopen their connections
+  const doneJobs = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Open new connections for new job IDs
+    const currentIds = new Set(jobIds);
+
+    // ── Close connections for jobs no longer in the active list ──────────
+    for (const [id, es] of esRefs.current) {
+      if (!currentIds.has(id)) {
+        es.close();
+        esRefs.current.delete(id);
+      }
+    }
+
+    // ── Open new connections for newly active jobs ─────────────────────
     for (const jobId of jobIds) {
-      if (esRefs.current.has(jobId)) continue;
+      // Skip if already connected or already finished
+      if (esRefs.current.has(jobId) || doneJobs.current.has(jobId)) continue;
 
       const baseUrl = process.env.NEXT_PUBLIC_API_URL
         ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
@@ -102,7 +123,7 @@ export function useMultiSSE(jobIds: string[]) {
           const event: ProgressEvent = JSON.parse(e.data);
           updateProgress(jobId, event);
 
-          let statusPatch: Partial<{ status: JobStatus; progress: number; current_stage: string }> = {
+          const statusPatch: Partial<{ status: JobStatus; progress: number; current_stage: string }> = {
             progress: event.progress,
             current_stage: event.stage ?? undefined,
           };
@@ -119,6 +140,7 @@ export function useMultiSSE(jobIds: string[]) {
           updateJobInList(jobId, statusPatch);
 
           if (TERMINAL_EVENTS.has(event.event)) {
+            doneJobs.current.add(jobId);
             es.close();
             esRefs.current.delete(jobId);
           }
@@ -128,23 +150,32 @@ export function useMultiSSE(jobIds: string[]) {
       };
 
       es.onerror = () => {
-        es.close();
-        esRefs.current.delete(jobId);
+        // Only clean up if not already done (avoid closing after terminal event)
+        if (!doneJobs.current.has(jobId)) {
+          es.close();
+          esRefs.current.delete(jobId);
+        }
       };
     }
 
-    // Close connections for jobs no longer in the list
-    for (const [id, es] of esRefs.current) {
-      if (!jobIds.includes(id)) {
-        es.close();
-        esRefs.current.delete(id);
-      }
-    }
-
+    // ── Unmount cleanup: close everything ────────────────────────────────
+    // This runs only when the component using this hook unmounts — NOT on
+    // every jobIds change (that's handled above). This is the key fix.
     return () => {
-      for (const es of esRefs.current.values()) es.close();
-      esRefs.current.clear();
+      // intentionally empty — we manage lifecycle above
+      // If you want to close all on unmount, uncomment:
+      // for (const es of esRefs.current.values()) es.close();
+      // esRefs.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(jobIds)]);
+
+  // Separate cleanup effect that truly only fires on component unmount
+  useEffect(() => {
+    return () => {
+      for (const es of esRefs.current.values()) es.close();
+      esRefs.current.clear();
+      doneJobs.current.clear();
+    };
+  }, []); // empty deps = runs only on mount/unmount
 }

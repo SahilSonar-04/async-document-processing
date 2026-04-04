@@ -2,22 +2,26 @@ import asyncio
 import csv
 import io
 import json
+import logging
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.db.session import get_db
-from app.db.redis_client import get_async_redis, get_pubsub_channel
-from app.models.models import JobStatus
+from app.db.redis_client import get_async_redis, get_pubsub_channel, get_cached_job_status
+from app.models.models import JobStatus, Job
 from app.schemas.schemas import (
     UploadResponse, JobListResponse, JobResponse,
     ResultUpdateRequest, ResultResponse,
     FinalizeRequest,
 )
 from app.services.document_service import DocumentService
+from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -94,11 +98,21 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
 # ── SSE Progress stream ───────────────────────────────────────────────────────
 
 @router.get("/jobs/{job_id}/progress")
-async def stream_progress(job_id: str):
+async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
     """
     Server-Sent Events endpoint.
-    Subscribes to Redis Pub/Sub channel for this job and streams events
-    to the client until job completes, fails, or client disconnects.
+
+    Supports two modes controlled by settings.sse_mode:
+
+    "pubsub" — subscribes to Redis Pub/Sub channel (fast, requires real Redis).
+               Use this locally or with Upstash Redis.
+
+    "poll"   — polls the DB every ~1.5 s and reads the cached Redis key written
+               by the Celery worker. Works on Render free Redis which blocks
+               SUBSCRIBE/PUBLISH.
+
+    Both modes respect settings.sse_timeout (default 75 s) to stay under
+    Render's 90-second proxy hard-kill limit.
     """
     import uuid
     try:
@@ -106,17 +120,29 @@ async def stream_progress(job_id: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job ID")
 
-    async def event_generator() -> AsyncGenerator[str, None]:
+    terminal_events = {"job_completed", "job_failed", "job_cancelled"}
+    timeout = settings.sse_timeout  # 75 s — safe under Render's 90 s limit
+
+    # ── Helper: emit an SSE data line ─────────────────────────────────────
+    def _sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    # ── Mode A: Redis Pub/Sub ─────────────────────────────────────────────
+    async def pubsub_generator() -> AsyncGenerator[str, None]:
         redis = await get_async_redis()
         pubsub = redis.pubsub()
         channel = get_pubsub_channel(job_id)
-        await pubsub.subscribe(channel)
-
-        terminal_events = {"job_completed", "job_failed", "job_cancelled"}
-        timeout = 300  # 5 minutes max
-
         try:
-            elapsed = 0
+            await pubsub.subscribe(channel)
+        except Exception as e:
+            logger.warning("Pub/Sub subscribe failed (%s) — falling back to poll", e)
+            await pubsub.close()
+            await redis.aclose()
+            # Yield nothing — caller should switch to poll_generator
+            return
+
+        elapsed = 0
+        try:
             while elapsed < timeout:
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True, timeout=1.0
@@ -124,8 +150,6 @@ async def stream_progress(job_id: str):
                 if message and message["type"] == "message":
                     data = message["data"]
                     yield f"data: {data}\n\n"
-
-                    # Close stream on terminal event
                     try:
                         parsed = json.loads(data)
                         if parsed.get("event") in terminal_events:
@@ -133,23 +157,112 @@ async def stream_progress(job_id: str):
                     except json.JSONDecodeError:
                         pass
                 else:
-                    # Send keepalive ping every 15s
                     elapsed += 1
                     if elapsed % 15 == 0:
-                        yield f": ping\n\n"
-
-                await asyncio.sleep(0)  # Yield to event loop
+                        yield ": ping\n\n"
+                await asyncio.sleep(0)
         finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.close()
-            await redis.aclose()
+            try:
+                await pubsub.unsubscribe(channel)
+                await pubsub.close()
+                await redis.aclose()
+            except Exception:
+                pass
+
+    # ── Mode B: DB polling (works on Render free Redis) ───────────────────
+    async def poll_generator() -> AsyncGenerator[str, None]:
+        """
+        Every poll_interval seconds:
+        1. Read cached Redis key written by Celery worker (fastest path).
+        2. Fall back to a lightweight DB query if cache is empty.
+        Sends the event as an SSE message.
+        """
+        poll_interval = settings.sse_poll_interval  # 1.5 s
+        elapsed = 0.0
+        last_event: str | None = None
+        last_progress: int = -1
+        ping_counter = 0
+
+        redis = None
+        try:
+            redis = await get_async_redis()
+        except Exception:
+            pass
+
+        while elapsed < timeout:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            ping_counter += 1
+
+            event_payload: dict | None = None
+
+            # 1. Try Redis cache first (O(1), written by worker on every stage)
+            if redis:
+                try:
+                    event_payload = await get_cached_job_status(redis, job_id)
+                except Exception:
+                    pass
+
+            # 2. Fall back to DB query
+            if not event_payload:
+                try:
+                    result = await db.execute(
+                        select(Job).where(Job.id == job_id)  # type: ignore[arg-type]
+                    )
+                    job_row = result.scalar_one_or_none()
+                    if job_row:
+                        event_name = (
+                            "job_completed" if job_row.status == JobStatus.COMPLETED
+                            else "job_failed" if job_row.status == JobStatus.FAILED
+                            else "job_cancelled" if job_row.status == JobStatus.CANCELLED
+                            else "job_progress"
+                        )
+                        event_payload = {
+                            "job_id": job_id,
+                            "event": event_name,
+                            "progress": job_row.progress,
+                            "stage": job_row.current_stage,
+                            "message": job_row.error_message or "",
+                            "timestamp": job_row.updated_at.isoformat(),
+                        }
+                except Exception as e:
+                    logger.warning("Poll DB query failed: %s", e)
+
+            # Only emit if something changed (avoid duplicate events)
+            if event_payload:
+                new_event = event_payload.get("event", "")
+                new_progress = event_payload.get("progress", -1)
+
+                if new_event != last_event or new_progress != last_progress:
+                    last_event = new_event
+                    last_progress = new_progress
+                    yield _sse(event_payload)
+
+                if new_event in terminal_events:
+                    break
+            else:
+                # Send keepalive ping every ~15 s so Render doesn't kill idle SSE
+                if ping_counter % max(1, int(15 / poll_interval)) == 0:
+                    yield ": ping\n\n"
+
+        if redis:
+            try:
+                await redis.aclose()
+            except Exception:
+                pass
+
+    # ── Select generator based on config ─────────────────────────────────
+    if settings.sse_mode == "pubsub":
+        generator = pubsub_generator()
+    else:
+        generator = poll_generator()
 
     return StreamingResponse(
-        event_generator(),
+        generator,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },
     )

@@ -23,7 +23,11 @@ class Settings(BaseSettings):
     allowed_extensions: list[str] = ["pdf", "txt", "csv", "json", "md", "docx"]
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://async-document-processing.vercel.app",
+    ]
 
     # Celery
     celery_task_max_retries: int = 3
@@ -31,6 +35,18 @@ class Settings(BaseSettings):
 
     # Pub/Sub channel prefix
     pubsub_channel_prefix: str = "job_events"
+
+    # SSE delivery mode:
+    #   "pubsub" — Redis Pub/Sub (fast, requires Upstash or self-hosted Redis)
+    #   "poll"   — DB polling fallback (works on Render free Redis)
+    sse_mode: str = "pubsub"
+
+    # How often (seconds) the SSE poll loop queries the DB
+    sse_poll_interval: float = 1.5
+
+    # Max SSE stream duration in seconds.
+    # Render free tier hard-kills requests at 90s — keep this under that.
+    sse_timeout: int = 75
 
     class Config:
         env_file = ".env"

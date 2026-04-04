@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 import Link from "next/link";
@@ -47,10 +47,16 @@ export default function JobDetailPage() {
   const liveProgress = useJobStore((s) => (jobId ? s.progress[jobId] : null));
   useSSE(jobId, job?.status === "queued" || job?.status === "processing");
 
-  // Fetch job detail
+  // ✅ FIX: guard so we only fire one getJob refresh per terminal event
+  const refreshedForEvent = useRef<string | null>(null);
+
+  // Fetch job detail on mount / jobId change
   useEffect(() => {
     if (!jobId) return;
     setLoading(true);
+    setError(null);
+    refreshedForEvent.current = null;
+
     getJob(jobId)
       .then((data) => {
         setJob(data);
@@ -61,19 +67,24 @@ export default function JobDetailPage() {
           setEditKeywords(data.result.keywords?.join(", ") ?? "");
         }
       })
-      .catch((e) => setError(e.message))
+      .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, [jobId]);
 
-  // Refresh when SSE says completed/failed
+  // Refresh job data when SSE emits a terminal event — exactly once per event
   useEffect(() => {
-    if (
-      liveProgress &&
-      (liveProgress.event === "job_completed" || liveProgress.event === "job_failed")
-    ) {
-      if (jobId) {
-        setTimeout(() => {
-          getJob(jobId).then((data) => {
+    if (!liveProgress || !jobId) return;
+
+    const isTerminal =
+      liveProgress.event === "job_completed" || liveProgress.event === "job_failed";
+
+    // ✅ FIX: only fetch if this specific terminal event hasn't been handled yet
+    if (isTerminal && refreshedForEvent.current !== liveProgress.event) {
+      refreshedForEvent.current = liveProgress.event;
+
+      const timer = setTimeout(() => {
+        getJob(jobId)
+          .then((data) => {
             setJob(data);
             if (data.result) {
               setEditTitle(data.result.title ?? "");
@@ -81,11 +92,15 @@ export default function JobDetailPage() {
               setEditSummary(data.result.summary ?? "");
               setEditKeywords(data.result.keywords?.join(", ") ?? "");
             }
+          })
+          .catch(() => {
+            // silently ignore — job detail already loaded from initial fetch
           });
-        }, 500);
-      }
+      }, 600);
+
+      return () => clearTimeout(timer);
     }
-  }, [liveProgress, jobId]);
+  }, [liveProgress?.event, jobId]); // only re-run when the event TYPE changes
 
   const handleRetry = async () => {
     if (!jobId) return;
@@ -93,6 +108,7 @@ export default function JobDetailPage() {
     try {
       const updated = await retryJob(jobId);
       setJob(updated);
+      refreshedForEvent.current = null; // allow re-refresh after retry
       toast.success("Job re-queued for processing");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Retry failed");
@@ -145,8 +161,11 @@ export default function JobDetailPage() {
   if (loading) {
     return (
       <Layout>
-        <div className="flex items-center justify-center py-20">
+        <div className="flex flex-col items-center justify-center py-20 gap-3">
           <Spinner className="w-8 h-8" />
+          <p className="text-sm text-gray-400">
+            Loading… (the server may be waking up, please wait a moment)
+          </p>
         </div>
       </Layout>
     );

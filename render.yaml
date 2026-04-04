@@ -5,26 +5,36 @@ databases:
     plan: free
 
 services:
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  # NOTE: Render's managed Redis free tier disables Pub/Sub commands.
+  # We work around this by using Redis only for Celery broker/backend
+  # and switching the SSE endpoint to DB polling instead of Pub/Sub.
+  # If you want true Pub/Sub, replace with Upstash Redis (free tier supports it).
   - type: redis
     name: docflow-redis
     plan: free
-    ipAllowList: [] # internal only
+    ipAllowList: []       # internal only — not reachable from outside
     maxmemoryPolicy: noeviction
 
+  # ── Backend (API + Celery worker in one dyno on free tier) ───────────────
   - type: web
     name: docflow-backend
     env: python
     plan: free
     buildCommand: "cd backend && pip install -r requirements.txt"
-    startCommand: 'cd backend && bash start.sh'
+    startCommand: "cd backend && bash start.sh"
 
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.8"
+
+      # Postgres — Render injects as postgres:// which start.sh normalises
       - key: DATABASE_URL
         fromDatabase:
           name: docflow-db
           property: connectionString
+
+      # Redis — all three point to the same instance on free tier
       - key: REDIS_URL
         fromService:
           type: redis
@@ -40,11 +50,24 @@ services:
           type: redis
           name: docflow-redis
           property: connectionString
+
       - key: SECRET_KEY
         generateValue: true
+
       - key: ENVIRONMENT
         value: production
+
+      # ⚠ Render free tier has ephemeral disk — files in /tmp are wiped on restart.
+      # For production, replace with S3/Cloudinary and update DocumentService.
+      # For demo purposes /tmp/uploads works as long as processing is fast.
       - key: UPLOAD_DIR
         value: /tmp/uploads
+
+      # ✅ FIXED: Set to your actual Vercel frontend URL
       - key: CORS_ORIGINS
-        value: '["http://localhost:3000"]' # 🚨 IMPORTANT: Update this to your deployed Vercel URL later!
+        value: '["https://async-document-processing.vercel.app", "http://localhost:3000"]'
+
+      # How the SSE endpoint delivers progress without Pub/Sub
+      # "poll" = DB polling fallback; "pubsub" = Redis Pub/Sub (needs Upstash)
+      - key: SSE_MODE
+        value: poll
