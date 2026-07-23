@@ -2,12 +2,10 @@ export type JobStatus = "queued" | "processing" | "completed" | "failed" | "canc
 
 export interface Document {
   id: string;
-  filename: string;
   original_filename: string;
   file_type: string;
   file_size: number;
   uploaded_at: string;
-  is_deleted: boolean;
 }
 
 export interface ProcessingResult {
@@ -53,13 +51,7 @@ export interface JobListItem {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
-  document?: {
-    id: string;
-    original_filename: string;
-    file_type: string;
-    file_size: number;
-    uploaded_at: string;
-  };
+  document?: Document;
 }
 
 export interface JobListResponse {

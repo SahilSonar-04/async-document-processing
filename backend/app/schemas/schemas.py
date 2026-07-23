@@ -6,26 +6,6 @@ from pydantic import BaseModel, ConfigDict
 from app.models.models import JobStatus
 
 
-# ── Document schemas ──────────────────────────────────────────────────────────
-
-class DocumentBase(BaseModel):
-    filename: str
-    original_filename: str
-    file_type: str
-    file_size: int
-
-
-class DocumentResponse(DocumentBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    uploaded_at: datetime
-    is_deleted: bool
-    job: JobResponse | None = None
-
-
-# ── Job schemas ───────────────────────────────────────────────────────────────
-
 class JobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -69,8 +49,6 @@ class DocumentSummary(BaseModel):
     uploaded_at: datetime
 
 
-# ── Result schemas ────────────────────────────────────────────────────────────
-
 class ResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -101,19 +79,6 @@ class FinalizeRequest(BaseModel):
     confirmed: bool = True
 
 
-# ── SSE / Progress event schemas ──────────────────────────────────────────────
-
-class ProgressEvent(BaseModel):
-    job_id: str
-    event: str
-    progress: int
-    stage: str | None = None
-    message: str | None = None
-    timestamp: str
-
-
-# ── List / filter schemas ─────────────────────────────────────────────────────
-
 class JobListResponse(BaseModel):
     items: list[JobListItem]
     total: int
@@ -129,8 +94,6 @@ class UploadResponse(BaseModel):
     status: JobStatus
     message: str
 
-
-# ── Export schemas ────────────────────────────────────────────────────────────
 
 class ExportRecord(BaseModel):
     job_id: str

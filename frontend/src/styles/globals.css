@@ -25,7 +25,6 @@ body {
   min-height: 100vh;
 }
 
-/* ── Scrollbar ─────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -40,24 +39,14 @@ body {
   @apply bg-gray-400;
 }
 
-/* ── Focus ring ────────────────────────────────────────────────────── */
 *:focus-visible {
   @apply outline-none ring-2 ring-brand-400 ring-offset-2;
 }
 
-/* ── Selection ─────────────────────────────────────────────────────── */
 ::selection {
   @apply bg-brand-200 text-brand-900;
 }
 
-/* ── Smooth transitions ────────────────────────────────────────────── */
 a, button, input, select, textarea {
   @apply transition-colors duration-150;
-}
-
-/* ── Animation for progress bar pulse ──────────────────────────────── */
-@keyframes progress-shimmer {
-  0% { opacity: 1; }
-  50% { opacity: 0.7; }
-  100% { opacity: 1; }
 }

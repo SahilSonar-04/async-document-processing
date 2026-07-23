@@ -32,19 +32,12 @@ class Document(Base):
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # DB-backed backup of the raw file bytes. Render's free-tier disk is
-    # ephemeral and can be wiped between upload and processing (e.g. on a
-    # restart/redeploy). The worker falls back to this column if the local
-    # disk copy is missing. Cleared out after successful processing since
-    # it's only needed as a transient backup, not permanent storage.
     file_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Relationships
     job: Mapped["Job"] = relationship("Job", back_populates="document", uselist=False)
 
 
@@ -61,7 +54,7 @@ class Job(Base):
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus), default=JobStatus.QUEUED, nullable=False, index=True
     )
-    progress: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
+    progress: Mapped[int] = mapped_column(Integer, default=0)
     current_stage: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -75,7 +68,6 @@ class Job(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    # Relationships
     document: Mapped["Document"] = relationship("Document", back_populates="job")
     result: Mapped["ProcessingResult"] = relationship(
         "ProcessingResult", back_populates="job", uselist=False
@@ -92,7 +84,6 @@ class ProcessingResult(Base):
         UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
     )
 
-    # Extracted structured fields
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -100,11 +91,9 @@ class ProcessingResult(Base):
     word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     language: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
-    # Raw extracted text and full JSON snapshot
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # Review workflow
     is_finalized: Mapped[bool] = mapped_column(Boolean, default=False)
     finalized_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -117,5 +106,4 @@ class ProcessingResult(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    # Relationships
     job: Mapped["Job"] = relationship("Job", back_populates="result")
