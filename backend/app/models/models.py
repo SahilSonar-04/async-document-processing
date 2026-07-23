@@ -4,7 +4,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     String, Integer, Boolean, Text, DateTime, Enum,
-    ForeignKey, JSON, func
+    ForeignKey, JSON, LargeBinary, func
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -31,6 +31,14 @@ class Document(Base):
     file_type: Mapped[str] = mapped_column(String(50), nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # DB-backed backup of the raw file bytes. Render's free-tier disk is
+    # ephemeral and can be wiped between upload and processing (e.g. on a
+    # restart/redeploy). The worker falls back to this column if the local
+    # disk copy is missing. Cleared out after successful processing since
+    # it's only needed as a transient backup, not permanent storage.
+    file_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -1,5 +1,3 @@
-"""Business logic service layer for document operations."""
-
 import os
 import uuid
 import math
@@ -47,13 +45,13 @@ class DocumentService:
         async with aiofiles.open(storage_path, "wb") as f:
             await f.write(content)
 
-        # ── DB records ────────────────────────────────────────────────
         document = Document(
             filename=unique_name,
             original_filename=file.filename,
             file_type=ext,
             file_size=len(content),
             storage_path=storage_path,
+            file_content=content,
         )
         db.add(document)
         await db.flush()

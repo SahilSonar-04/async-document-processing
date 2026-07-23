@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.workers.celery_app import celery_app
 from app.core.config import settings
 from app.db.redis_client import publish_event_sync
-from app.models.models import Job, ProcessingResult, JobStatus
+from app.models.models import Job, ProcessingResult, JobStatus, Document
 
 logger = logging.getLogger(__name__)
 
@@ -59,34 +59,60 @@ def _update_job(session: Session, job_id: str, **kwargs) -> Job:
     return job
 
 
-def _extract_text_from_file(path: str, file_type: str) -> str:
+def _restore_file_from_db_backup(session: Session, path: str, document_id: str) -> bool:
+    """
+    If the local disk copy of an uploaded file is missing (Render free tier
+    disk is ephemeral and can be wiped between upload and processing), try
+    to restore it from the DB-backed backup stored in Document.file_content.
+
+    Returns True if the file was successfully restored to `path`.
+    """
+    document = session.query(Document).filter(Document.id == document_id).first()
+    if not document or not document.file_content:
+        return False
+
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(document.file_content)
+        logger.info("Restored file from DB backup for document %s -> %s", document_id, path)
+        return True
+    except Exception as e:
+        logger.error("Failed to restore file from DB backup for document %s: %s", document_id, e)
+        return False
+
+
+def _extract_text_from_file(
+    path: str, file_type: str, session: Session, document_id: str
+) -> str:
     """
     Extract raw text from a file.
 
     On Render free tier the disk is ephemeral — if the dyno restarted between
-    upload and processing the file will be missing. We detect this and return a
-    clear error message rather than crashing with an unreadable traceback.
+    upload and processing the local copy will be missing. Before giving up,
+    we try to restore it from the DB-backed backup (Document.file_content).
+    Only if that's also unavailable do we fall back to simulated extraction.
     """
     if not os.path.exists(path):
-        # File lost due to ephemeral disk (common on Render free tier).
-        # We simulate extraction so the job still completes with demo data.
-        logger.warning(
-            "File not found at %s — likely lost due to ephemeral disk restart. "
-            "Using simulated extraction.",
-            path,
-        )
-        filename = os.path.basename(path)
-        return (
-            f"[File unavailable: {filename}]\n\n"
-            "The original file could not be read because the server restarted "
-            "after upload (ephemeral disk). For reliable file processing in "
-            "production, configure an external object store (S3, Cloudinary, etc.).\n\n"
-            "This document contains important information about project management, "
-            "data analysis, and strategic planning. Key topics include resource "
-            "allocation, risk assessment, timeline management, and stakeholder "
-            "communication. The document outlines best practices for async workflows, "
-            "distributed systems, and modern software engineering methodologies."
-        )
+        restored = _restore_file_from_db_backup(session, path, document_id)
+        if not restored:
+            logger.warning(
+                "File not found at %s and no DB backup available — using simulated extraction",
+                path,
+            )
+            filename = os.path.basename(path)
+            return (
+                f"[File unavailable: {filename}]\n\n"
+                "The original file could not be read because the server restarted "
+                "after upload (ephemeral disk) and no backup was found. For reliable "
+                "file processing in production, configure an external object store "
+                "(S3, Cloudinary, etc.).\n\n"
+                "This document contains important information about project management, "
+                "data analysis, and strategic planning. Key topics include resource "
+                "allocation, risk assessment, timeline management, and stakeholder "
+                "communication. The document outlines best practices for async workflows, "
+                "distributed systems, and modern software engineering methodologies."
+            )
 
     try:
         if file_type in ("txt", "md", "csv", "json"):
@@ -99,7 +125,7 @@ def _extract_text_from_file(path: str, file_type: str) -> str:
             reader = PdfReader(path)
             return "\n".join(page.extract_text() or "" for page in reader.pages)
         else:
-            # Simulate extraction for PDF, DOCX etc.
+            # Simulate extraction for DOCX etc. (not yet implemented for real)
             filename = os.path.basename(path)
             return (
                 f"[Simulated extraction for {file_type.upper()} file: {filename}]\n\n"
@@ -222,7 +248,7 @@ def process_document_task(
         _emit(job_id, "document_parsing_started", 20, "parsing", "Parsing document...")
         time.sleep(1.0)
 
-        extracted_text = _extract_text_from_file(storage_path, file_type)
+        extracted_text = _extract_text_from_file(storage_path, file_type, session, document_id)
 
         # ── Stage 3: Parsing completed ────────────────────────────────────
         _update_job(session, job_id, progress=45, current_stage="parsing_done")
@@ -269,6 +295,11 @@ def process_document_task(
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             },
         }
+
+        document = session.query(Document).filter(Document.id == document_id).first()
+        if document and document.file_content is not None:
+            document.file_content = None
+
         session.commit()
         time.sleep(0.5)
 
