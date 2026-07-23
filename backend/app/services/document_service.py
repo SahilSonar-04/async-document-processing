@@ -5,7 +5,7 @@ import aiofiles
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import UploadFile, HTTPException
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -165,14 +165,23 @@ class DocumentService:
                 detail=f"Can only retry failed/cancelled jobs. Current: {job.status}",
             )
 
-        job.status = JobStatus.QUEUED
-        job.progress = 0
-        job.current_stage = None
-        job.error_message = None
-        job.retry_count += 1
-        job.completed_at = None
-
+        # retry_count incremented at the SQL level (Job.retry_count + 1) instead
+        # of job.retry_count += 1 in Python — avoids a lost update if two retry
+        # requests for the same job land close together.
+        await db.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(
+                status=JobStatus.QUEUED,
+                progress=0,
+                current_stage=None,
+                error_message=None,
+                retry_count=Job.retry_count + 1,
+                completed_at=None,
+            )
+        )
         await db.commit()
+        await db.refresh(job)
 
         task = process_document_task.delay(
             str(job.id),
