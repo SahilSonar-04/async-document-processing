@@ -5,9 +5,11 @@ import os
 import re
 import logging
 import chardet
+from collections import Counter
 from datetime import datetime, timezone
 from celery import Task
 from celery.exceptions import MaxRetriesExceededError
+from langdetect import detect, DetectorFactory, LangDetectException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -18,23 +20,36 @@ from app.models.models import Job, ProcessingResult, JobStatus, Document
 
 logger = logging.getLogger(__name__)
 
-# Sync DB engine for Celery workers
+DetectorFactory.seed = 0
+
 sync_engine = create_engine(
     settings.sync_database_url,
     pool_pre_ping=True,
     pool_size=5,
-    # Important: prevent connection leaks when worker is killed
     pool_recycle=300,
 )
 SyncSession = sessionmaker(bind=sync_engine, autoflush=False, autocommit=False)
 
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+    "will", "would", "could", "should", "may", "might", "must", "can", "shall",
+    "this", "that", "these", "those", "it", "its", "i", "you", "he", "she", "we", "they",
+    "my", "your", "our", "their", "his", "her", "them", "him", "us", "me",
+    "as", "by", "from", "into", "about", "than", "then", "so", "if", "not", "no",
+    "up", "down", "out", "off", "over", "under", "again", "further", "here", "there",
+    "when", "where", "why", "how", "all", "any", "both", "each", "few", "more",
+    "most", "other", "some", "such", "only", "own", "same", "too", "very", "just",
+    "also", "one", "two", "first", "second",
+}
+
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[\u2022\u25CF\u25AA\u2023\u25E6\u00B7]|[-\u2013\u2014](?=\s))\s*")
+_MAX_PHRASE_WORDS = 5
+_MIN_STANDALONE_SENTENCE_WORDS = 3
+_FRAGMENT_WORD_LIMIT = 4
+
 
 def _emit(job_id: str, event: str, progress: int, stage: str, message: str = "") -> None:
-    """
-    Publish a progress event.
-    - Always caches to Redis (for SSE poll-mode fallback).
-    - Also tries Pub/Sub publish (no-op if Render Redis blocks it).
-    """
     payload = {
         "job_id": job_id,
         "event": event,
@@ -60,13 +75,6 @@ def _update_job(session: Session, job_id: str, **kwargs) -> Job:
 
 
 def _restore_file_from_db_backup(session: Session, path: str, document_id: str) -> bool:
-    """
-    If the local disk copy of an uploaded file is missing (Render free tier
-    disk is ephemeral and can be wiped between upload and processing), try
-    to restore it from the DB-backed backup stored in Document.file_content.
-
-    Returns True if the file was successfully restored to `path`.
-    """
     document = session.query(Document).filter(Document.id == document_id).first()
     if not document or not document.file_content:
         return False
@@ -85,19 +93,11 @@ def _restore_file_from_db_backup(session: Session, path: str, document_id: str) 
 def _extract_text_from_file(
     path: str, file_type: str, session: Session, document_id: str
 ) -> str:
-    """
-    Extract raw text from a file.
-
-    On Render free tier the disk is ephemeral — if the dyno restarted between
-    upload and processing the local copy will be missing. Before giving up,
-    we try to restore it from the DB-backed backup (Document.file_content).
-    Only if that's also unavailable do we fall back to simulated extraction.
-    """
     if not os.path.exists(path):
         restored = _restore_file_from_db_backup(session, path, document_id)
         if not restored:
             logger.warning(
-                "File not found at %s and no DB backup available — using simulated extraction",
+                "File not found at %s and no DB backup available — using placeholder text",
                 path,
             )
             filename = os.path.basename(path)
@@ -106,12 +106,7 @@ def _extract_text_from_file(
                 "The original file could not be read because the server restarted "
                 "after upload (ephemeral disk) and no backup was found. For reliable "
                 "file processing in production, configure an external object store "
-                "(S3, Cloudinary, etc.).\n\n"
-                "This document contains important information about project management, "
-                "data analysis, and strategic planning. Key topics include resource "
-                "allocation, risk assessment, timeline management, and stakeholder "
-                "communication. The document outlines best practices for async workflows, "
-                "distributed systems, and modern software engineering methodologies."
+                "(S3, Cloudinary, etc.)."
             )
 
     try:
@@ -120,48 +115,183 @@ def _extract_text_from_file(
                 raw = f.read()
             encoding = chardet.detect(raw)["encoding"] or "utf-8"
             return raw.decode(encoding, errors="replace")
+
         elif file_type == "pdf":
             from pypdf import PdfReader
             reader = PdfReader(path)
             raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
-            return re.sub(r"\s+", " ", raw_text).strip()
+            return raw_text.strip()
+
+        elif file_type == "docx":
+            from docx import Document as DocxDocument
+            doc = DocxDocument(path)
+            parts = [p.text for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            parts.append(cell.text)
+            return "\n".join(parts)
+
         else:
-            # Simulate extraction for DOCX etc. (not yet implemented for real)
             filename = os.path.basename(path)
-            return (
-                f"[Simulated extraction for {file_type.upper()} file: {filename}]\n\n"
-                "This document contains important information about project management, "
-                "data analysis, and strategic planning. Key topics include resource "
-                "allocation, risk assessment, timeline management, and stakeholder "
-                "communication. The document outlines best practices for async workflows, "
-                "distributed systems, and modern software engineering methodologies."
-            )
+            return f"[Unsupported file type: {file_type} for {filename}]"
+
     except Exception as e:
         return f"[Error extracting text: {str(e)}]"
 
 
+def _normalize_text(text: str) -> str:
+    units: list[str] = []
+    buffer = ""
+
+    def flush():
+        nonlocal buffer
+        if buffer:
+            u = buffer.strip()
+            if u and u[-1] not in ".!?:;":
+                u += "."
+            units.append(u)
+        buffer = ""
+
+    for raw_line in text.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        without_bullet = _BULLET_LINE_RE.sub("", line)
+        is_bullet_start = without_bullet != line
+        content = without_bullet.strip()
+        word_count = len(content.split())
+
+        if is_bullet_start:
+            flush()
+            buffer = content
+            continue
+
+        if buffer and word_count <= _FRAGMENT_WORD_LIMIT and buffer[-1:] not in ".!?:;":
+            buffer = f"{buffer} {content}".strip()
+        elif buffer:
+            flush()
+            buffer = content
+        else:
+            buffer = content
+
+    flush()
+    return " ".join(units)
+
+
+def _split_sentences(text: str) -> list[str]:
+    raw_parts = [p.strip() for p in re.split(r"(?<=[.!?:])\s+", text.strip()) if p.strip()]
+
+    merged: list[str] = []
+    for part in raw_parts:
+        if merged and len(part.split()) < _MIN_STANDALONE_SENTENCE_WORDS:
+            merged[-1] = f"{merged[-1]} {part}"
+        else:
+            merged.append(part)
+    return merged
+
+
+def _summarize(text: str, max_sentences: int = 3) -> str:
+    sentences = _split_sentences(text)
+    if len(sentences) <= max_sentences:
+        return " ".join(sentences)
+
+    words = re.findall(r"[a-zA-Z']+", text.lower())
+    freq = Counter(w for w in words if w not in _STOPWORDS and len(w) > 2)
+    if not freq:
+        return " ".join(sentences[:max_sentences])
+
+    max_freq = max(freq.values())
+    for w in freq:
+        freq[w] /= max_freq
+
+    scored = []
+    for i, sentence in enumerate(sentences):
+        sent_words = re.findall(r"[a-zA-Z']+", sentence.lower())
+        if len(sent_words) < _MIN_STANDALONE_SENTENCE_WORDS:
+            continue
+        score = sum(freq.get(w, 0) for w in sent_words) / len(sent_words)
+        score *= 1.0 - 0.05 * min(i, 5)
+        scored.append((score, i, sentence))
+
+    if not scored:
+        return " ".join(sentences[:max_sentences])
+
+    top = sorted(scored, key=lambda x: x[0], reverse=True)[:max_sentences]
+    ordered = [s for _, _, s in sorted(top, key=lambda x: x[1])]
+    return " ".join(ordered)
+
+
+def _rake_keywords(text: str, max_keywords: int = 10) -> list[str]:
+    sentences = _split_sentences(text)
+    if not sentences:
+        return []
+
+    phrases: list[list[str]] = []
+    for sentence in sentences:
+        words = re.findall(r"[a-zA-Z][a-zA-Z'-]*", sentence.lower())
+        current: list[str] = []
+        for w in words:
+            if w in _STOPWORDS or len(w) <= 2:
+                if current:
+                    phrases.append(current)
+                    current = []
+            else:
+                current.append(w)
+                if len(current) >= _MAX_PHRASE_WORDS:
+                    phrases.append(current)
+                    current = []
+        if current:
+            phrases.append(current)
+
+    if not phrases:
+        return []
+
+    freq: Counter = Counter()
+    degree: Counter = Counter()
+    for phrase in phrases:
+        co_degree = len(phrase) - 1
+        for w in phrase:
+            freq[w] += 1
+            degree[w] += co_degree
+    for w in freq:
+        degree[w] += freq[w]
+
+    word_score = {w: degree[w] / freq[w] for w in freq}
+
+    seen: set[str] = set()
+    phrase_scores: list[tuple[float, str]] = []
+    for phrase in phrases:
+        key = " ".join(phrase)
+        if key in seen:
+            continue
+        seen.add(key)
+        phrase_scores.append((sum(word_score[w] for w in phrase), key))
+
+    phrase_scores.sort(key=lambda x: x[0], reverse=True)
+    return [phrase for _, phrase in phrase_scores[:max_keywords]]
+
+
+def _detect_language(text: str) -> str:
+    sample = text.strip()
+    if len(sample) < 20:
+        return "unknown"
+    try:
+        return detect(sample)
+    except LangDetectException:
+        return "unknown"
+
+
 def _extract_fields(text: str, filename: str, file_type: str) -> dict:
-    """Extract structured fields from raw text."""
-    words = text.split()
-    word_count = len(words)
+    stripped = re.sub(r"\[.*?\]", "", text).strip()
+    normalized = _normalize_text(stripped)
+    word_count = len(normalized.split())
 
-    stopwords = {
-        "the","a","an","and","or","but","in","on","at","to","for","of","with",
-        "is","are","was","were","be","been","have","has","had","do","does","did",
-        "will","would","could","should","may","might","this","that","these","those",
-        "it","its","i","you","he","she","we","they","my","your","our","their",
-        "simulated","extraction","file","document","contains","unavailable",
-    }
-    word_freq: dict[str, int] = {}
-    for w in words:
-        w_clean = re.sub(r"[^a-zA-Z]", "", w.lower())
-        if len(w_clean) > 3 and w_clean not in stopwords:
-            word_freq[w_clean] = word_freq.get(w_clean, 0) + 1
-
-    keywords = sorted(word_freq, key=word_freq.get, reverse=True)[:10]  # type: ignore[arg-type]
-
-    latin_count = sum(1 for c in text if ord(c) < 256)
-    language = "en" if latin_count / max(len(text), 1) > 0.8 else "unknown"
+    summary = _summarize(normalized) if normalized else ""
+    keywords = _rake_keywords(normalized)
+    language = _detect_language(stripped)
 
     category_map = {
         "pdf": "document",
@@ -175,9 +305,6 @@ def _extract_fields(text: str, filename: str, file_type: str) -> dict:
 
     base = os.path.splitext(filename)[0]
     title = base.replace("_", " ").replace("-", " ").title()
-
-    clean_text = re.sub(r"\[.*?\]", "", text).strip()
-    summary = (clean_text[:200] + "...") if len(clean_text) > 200 else clean_text
 
     return {
         "title": title,
@@ -196,18 +323,16 @@ class BaseTask(Task):
         job_id = args[0] if args else None
         if not job_id:
             return
-        # Use a fresh session — the task's session may already be closed/rolled back
         try:
             with SyncSession() as session:
                 _update_job(
                     session, job_id,
                     status=JobStatus.FAILED,
-                    error_message=str(exc)[:500],  # cap length
+                    error_message=str(exc)[:500],
                     current_stage="failed",
                 )
         except Exception as e:
             logger.error("on_failure DB update failed for job %s: %s", job_id, e)
-        # Always try to emit — even if DB update failed
         try:
             _emit(job_id, "job_failed", 0, "failed", str(exc)[:200])
         except Exception as e:
@@ -229,46 +354,34 @@ def process_document_task(
     original_filename: str,
     file_type: str,
 ) -> dict:
-    """
-    Multi-stage document processing pipeline.
-
-    FIX: Session is now created inside the try block and explicitly closed in
-    finally, preventing connection leaks when Celery retries or kills the task.
-    """
     session: Session | None = None
     try:
         session = SyncSession()
 
-        # ── Stage 1: Job started ──────────────────────────────────────────
         _update_job(session, job_id, status=JobStatus.PROCESSING, progress=5, current_stage="started")
         _emit(job_id, "job_started", 5, "started", "Processing started")
         time.sleep(0.5)
 
-        # ── Stage 2: Parsing started ──────────────────────────────────────
         _update_job(session, job_id, progress=20, current_stage="parsing")
         _emit(job_id, "document_parsing_started", 20, "parsing", "Parsing document...")
         time.sleep(1.0)
 
         extracted_text = _extract_text_from_file(storage_path, file_type, session, document_id)
 
-        # ── Stage 3: Parsing completed ────────────────────────────────────
         _update_job(session, job_id, progress=45, current_stage="parsing_done")
         _emit(job_id, "document_parsing_completed", 45, "parsing_done", "Parsing complete")
         time.sleep(0.5)
 
-        # ── Stage 4: Field extraction started ────────────────────────────
         _update_job(session, job_id, progress=60, current_stage="extracting")
         _emit(job_id, "field_extraction_started", 60, "extracting", "Extracting fields...")
         time.sleep(1.0)
 
         fields = _extract_fields(extracted_text, original_filename, file_type)
 
-        # ── Stage 5: Field extraction completed ──────────────────────────
         _update_job(session, job_id, progress=80, current_stage="extraction_done")
         _emit(job_id, "field_extraction_completed", 80, "extraction_done", "Fields extracted")
         time.sleep(0.5)
 
-        # ── Stage 6: Storing result ───────────────────────────────────────
         _update_job(session, job_id, progress=90, current_stage="storing")
         _emit(job_id, "storing_result", 90, "storing", "Storing result...")
 
@@ -304,7 +417,6 @@ def process_document_task(
         session.commit()
         time.sleep(0.5)
 
-        # ── Stage 7: Job completed ────────────────────────────────────────
         _update_job(
             session, job_id,
             status=JobStatus.COMPLETED,
@@ -317,14 +429,12 @@ def process_document_task(
         return {"job_id": job_id, "status": "completed", "fields": fields}
 
     except Exception as exc:
-        # Roll back any partial changes from this attempt
         if session:
             try:
                 session.rollback()
             except Exception:
                 pass
 
-        # Don't retry if it's already a MaxRetriesExceeded propagation
         if isinstance(exc, MaxRetriesExceededError):
             raise
 
@@ -332,12 +442,9 @@ def process_document_task(
             "Task failed for job %s (attempt %d/%d): %s",
             job_id, self.request.retries + 1, self.max_retries + 1, exc,
         )
-        # self.retry() raises Retry which Celery catches — it's NOT an exception
-        # that triggers on_failure unless retries are exhausted.
         raise self.retry(exc=exc, countdown=30)
 
     finally:
-        # ✅ FIX: Always close the session to return the connection to the pool
         if session:
             try:
                 session.close()
