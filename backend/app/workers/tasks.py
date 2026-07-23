@@ -94,6 +94,10 @@ def _extract_text_from_file(path: str, file_type: str) -> str:
                 raw = f.read()
             encoding = chardet.detect(raw)["encoding"] or "utf-8"
             return raw.decode(encoding, errors="replace")
+        elif file_type == "pdf":
+            from pypdf import PdfReader
+            reader = PdfReader(path)
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
         else:
             # Simulate extraction for PDF, DOCX etc.
             filename = os.path.basename(path)

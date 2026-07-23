@@ -16,6 +16,7 @@ flower==2.0.1
 # File handling
 python-multipart==0.0.9
 aiofiles==23.2.1
+pypdf==4.2.0
 
 # Validation & settings
 pydantic==2.7.1
