@@ -321,6 +321,7 @@ class BaseTask(Task):
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         job_id = args[0] if args else None
+        document_id = args[1] if args and len(args) > 1 else None
         if not job_id:
             return
         try:
@@ -331,6 +332,13 @@ class BaseTask(Task):
                     error_message=str(exc)[:500],
                     current_stage="failed",
                 )
+                if document_id:
+                    document = session.query(Document).filter(
+                        Document.id == document_id
+                    ).first()
+                    if document and document.file_content is not None:
+                        document.file_content = None
+                        session.commit()
         except Exception as e:
             logger.error("on_failure DB update failed for job %s: %s", job_id, e)
         try:

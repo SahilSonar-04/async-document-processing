@@ -2,6 +2,7 @@ import os
 import uuid
 import math
 import aiofiles
+from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import UploadFile, HTTPException
 from sqlalchemy import select, func, or_
@@ -15,58 +16,80 @@ from app.schemas.schemas import (
 )
 from app.workers.tasks import process_document_task
 
+MAX_BULK_FILES = 20
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+
 
 class DocumentService:
 
+    MAX_BULK_FILES = MAX_BULK_FILES
+
     @staticmethod
     async def upload_document(file: UploadFile, db: AsyncSession) -> tuple[Document, Job]:
-        """Validate, store file on disk, create DB records, enqueue Celery task."""
-
-        # ── Validate ──────────────────────────────────────────────────
         if not file.filename:
             raise HTTPException(status_code=400, detail="No filename provided")
 
-        ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+        safe_filename = Path(file.filename).name
+        if not safe_filename or safe_filename in (".", ".."):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        ext = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
         if ext not in settings.allowed_extensions:
             raise HTTPException(
                 status_code=400,
                 detail=f"File type .{ext} not allowed. Accepted: {settings.allowed_extensions}",
             )
 
-        content = await file.read()
-        if len(content) > settings.max_file_size_mb * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File too large")
-
-        # ── Store on disk ─────────────────────────────────────────────
-        unique_name = f"{uuid.uuid4().hex}_{file.filename}"
-        storage_path = os.path.join(settings.upload_dir, unique_name)
+        unique_name = f"{uuid.uuid4().hex}_{safe_filename}"
         os.makedirs(settings.upload_dir, exist_ok=True)
+        storage_path = os.path.join(settings.upload_dir, unique_name)
 
-        async with aiofiles.open(storage_path, "wb") as f:
-            await f.write(content)
+        upload_root = Path(settings.upload_dir).resolve()
+        resolved = Path(storage_path).resolve()
+        if upload_root != resolved.parent:
+            raise HTTPException(status_code=400, detail="Invalid file path")
+
+        max_bytes = settings.max_file_size_mb * 1024 * 1024
+        size = 0
+        content = bytearray()
+
+        try:
+            async with aiofiles.open(storage_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise HTTPException(status_code=400, detail="File too large")
+                    content.extend(chunk)
+                    await f.write(chunk)
+        except HTTPException:
+            if os.path.exists(storage_path):
+                os.remove(storage_path)
+            raise
+        except Exception:
+            if os.path.exists(storage_path):
+                os.remove(storage_path)
+            raise HTTPException(status_code=500, detail="Failed to store uploaded file")
 
         document = Document(
             filename=unique_name,
-            original_filename=file.filename,
+            original_filename=safe_filename,
             file_type=ext,
-            file_size=len(content),
+            file_size=size,
             storage_path=storage_path,
-            file_content=content,
+            file_content=bytes(content),
         )
         db.add(document)
         await db.flush()
 
         job = Job(document_id=document.id, status=JobStatus.QUEUED, progress=0)
         db.add(job)
-        # Commit so the job exists in DB before the worker picks it up
         await db.commit()
 
-        # ── Enqueue Celery task ───────────────────────────────────────
         task = process_document_task.delay(
             str(job.id),
             str(document.id),
             storage_path,
-            file.filename,
+            safe_filename,
             ext,
         )
         job.celery_task_id = task.id
@@ -84,11 +107,8 @@ class DocumentService:
         sort_by: str,
         sort_dir: str,
     ) -> JobListResponse:
-        """List jobs with filtering, searching, sorting, and pagination."""
-
         query = select(Job).options(selectinload(Job.document))
 
-        # Filters
         if status:
             query = query.where(Job.status == status)
         if search:
@@ -99,16 +119,15 @@ class DocumentService:
                 )
             )
 
-        # Count
         count_query = select(func.count()).select_from(query.subquery())
         total = (await db.execute(count_query)).scalar() or 0
 
-        # Sort
-        sort_col = getattr(Job, sort_by, Job.created_at)
+        allowed_sort_cols = {"created_at", "updated_at", "status", "progress"}
+        sort_by = sort_by if sort_by in allowed_sort_cols else "created_at"
+        sort_col = getattr(Job, sort_by)
         order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
         query = query.order_by(order)
 
-        # Paginate
         offset = (page - 1) * page_size
         query = query.offset(offset).limit(page_size)
 
@@ -125,7 +144,6 @@ class DocumentService:
 
     @staticmethod
     async def get_job_detail(job_id: uuid.UUID, db: AsyncSession) -> Job:
-        """Get full job detail with document and result."""
         query = (
             select(Job)
             .options(selectinload(Job.document), selectinload(Job.result))
@@ -139,7 +157,6 @@ class DocumentService:
 
     @staticmethod
     async def retry_job(job_id: uuid.UUID, db: AsyncSession) -> Job:
-        """Retry a failed job by resetting state and re-enqueuing."""
         job = await DocumentService.get_job_detail(job_id, db)
 
         if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
@@ -173,7 +190,6 @@ class DocumentService:
     async def update_result(
         job_id: uuid.UUID, update: ResultUpdateRequest, db: AsyncSession
     ) -> ProcessingResult:
-        """Edit fields on a processing result (before finalization)."""
         query = select(ProcessingResult).where(ProcessingResult.job_id == job_id)
         result = (await db.execute(query)).scalar_one_or_none()
 
@@ -191,7 +207,6 @@ class DocumentService:
 
     @staticmethod
     async def finalize_result(job_id: uuid.UUID, db: AsyncSession) -> ProcessingResult:
-        """Mark a result as finalized (locks further edits)."""
         query = select(ProcessingResult).where(ProcessingResult.job_id == job_id)
         result = (await db.execute(query)).scalar_one_or_none()
 
@@ -210,7 +225,6 @@ class DocumentService:
     async def get_export_data(
         db: AsyncSession, finalized_only: bool = False
     ) -> list[ExportRecord]:
-        """Build export records from completed jobs."""
         query = (
             select(Job)
             .options(selectinload(Job.document), selectinload(Job.result))

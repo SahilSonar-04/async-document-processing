@@ -17,7 +17,7 @@ from app.models.models import JobStatus, Job
 from app.schemas.schemas import (
     UploadResponse, JobListResponse, JobResponse,
     ResultUpdateRequest, ResultResponse,
-    FinalizeRequest,
+    FinalizeRequest, ExportRecord,
 )
 from app.services.document_service import DocumentService
 from app.core.config import settings
@@ -26,14 +26,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ── Upload ────────────────────────────────────────────────────────────────────
-
 @router.post("/upload", response_model=UploadResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a document. Returns immediately with job_id. Processing is async."""
     document, job = await DocumentService.upload_document(file, db)
     return UploadResponse(
         document_id=document.id,
@@ -49,7 +46,12 @@ async def upload_multiple(
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload multiple documents at once."""
+    if len(files) > DocumentService.MAX_BULK_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files in one request (max {DocumentService.MAX_BULK_FILES})",
+        )
+
     results = []
     errors = []
     for file in files:
@@ -67,8 +69,6 @@ async def upload_multiple(
 
     return {"uploaded": results, "errors": errors}
 
-
-# ── Jobs list & detail ────────────────────────────────────────────────────────
 
 @router.get("/jobs", response_model=JobListResponse)
 async def list_jobs(
@@ -96,25 +96,8 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     return job
 
 
-# ── SSE Progress stream ───────────────────────────────────────────────────────
-
 @router.get("/jobs/{job_id}/progress")
 async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Server-Sent Events endpoint.
-
-    Supports two modes controlled by settings.sse_mode:
-
-    "pubsub" — subscribes to Redis Pub/Sub channel (fast, requires real Redis).
-               Use this locally or with Upstash Redis.
-
-    "poll"   — polls the DB every ~1.5 s and reads the cached Redis key written
-               by the Celery worker. Works on Render free Redis which blocks
-               SUBSCRIBE/PUBLISH.
-
-    Both modes respect settings.sse_timeout (default 75 s) to stay under
-    Render's 90-second proxy hard-kill limit.
-    """
     import uuid
     try:
         uuid.UUID(job_id)
@@ -122,63 +105,13 @@ async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid job ID")
 
     terminal_events = {"job_completed", "job_failed", "job_cancelled"}
-    timeout = settings.sse_timeout  # 75 s — safe under Render's 90 s limit
+    timeout = settings.sse_timeout
 
-    # ── Helper: emit an SSE data line ─────────────────────────────────────
     def _sse(payload: dict) -> str:
         return f"data: {json.dumps(payload)}\n\n"
 
-    # ── Mode A: Redis Pub/Sub ─────────────────────────────────────────────
-    async def pubsub_generator() -> AsyncGenerator[str, None]:
-        redis = await get_async_redis()
-        pubsub = redis.pubsub()
-        channel = get_pubsub_channel(job_id)
-        try:
-            await pubsub.subscribe(channel)
-        except Exception as e:
-            logger.warning("Pub/Sub subscribe failed (%s) — falling back to poll", e)
-            await pubsub.close()
-            await redis.aclose()
-            # Yield nothing — caller should switch to poll_generator
-            return
-
-        elapsed = 0
-        try:
-            while elapsed < timeout:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=1.0
-                )
-                if message and message["type"] == "message":
-                    data = message["data"]
-                    yield f"data: {data}\n\n"
-                    try:
-                        parsed = json.loads(data)
-                        if parsed.get("event") in terminal_events:
-                            break
-                    except json.JSONDecodeError:
-                        pass
-                else:
-                    elapsed += 1
-                    if elapsed % 15 == 0:
-                        yield ": ping\n\n"
-                await asyncio.sleep(0)
-        finally:
-            try:
-                await pubsub.unsubscribe(channel)
-                await pubsub.close()
-                await redis.aclose()
-            except Exception:
-                pass
-
-    # ── Mode B: DB polling (works on Render free Redis) ───────────────────
     async def poll_generator() -> AsyncGenerator[str, None]:
-        """
-        Every poll_interval seconds:
-        1. Read cached Redis key written by Celery worker (fastest path).
-        2. Fall back to a lightweight DB query if cache is empty.
-        Sends the event as an SSE message.
-        """
-        poll_interval = settings.sse_poll_interval  # 1.5 s
+        poll_interval = settings.sse_poll_interval
         elapsed = 0.0
         last_event: str | None = None
         last_progress: int = -1
@@ -197,14 +130,12 @@ async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
 
             event_payload: dict | None = None
 
-            # 1. Try Redis cache first (O(1), written by worker on every stage)
             if redis:
                 try:
                     event_payload = await get_cached_job_status(redis, job_id)
                 except Exception:
                     pass
 
-            # 2. Fall back to DB query
             if not event_payload:
                 try:
                     result = await db.execute(
@@ -229,7 +160,6 @@ async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
                 except Exception as e:
                     logger.warning("Poll DB query failed: %s", e)
 
-            # Only emit if something changed (avoid duplicate events)
             if event_payload:
                 new_event = event_payload.get("event", "")
                 new_progress = event_payload.get("progress", -1)
@@ -242,7 +172,6 @@ async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
                 if new_event in terminal_events:
                     break
             else:
-                # Send keepalive ping every ~15 s so Render doesn't kill idle SSE
                 if ping_counter % max(1, int(15 / poll_interval)) == 0:
                     yield ": ping\n\n"
 
@@ -252,14 +181,65 @@ async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
             except Exception:
                 pass
 
-    # ── Select generator based on config ─────────────────────────────────
-    if settings.sse_mode == "pubsub":
-        generator = pubsub_generator()
-    else:
-        generator = poll_generator()
+    async def combined_generator() -> AsyncGenerator[str, None]:
+        if settings.sse_mode != "pubsub":
+            async for chunk in poll_generator():
+                yield chunk
+            return
+
+        redis = None
+        pubsub = None
+        try:
+            redis = await get_async_redis()
+            pubsub = redis.pubsub()
+            channel = get_pubsub_channel(job_id)
+            await pubsub.subscribe(channel)
+        except Exception as e:
+            logger.warning("Pub/Sub subscribe failed (%s) — falling back to poll", e)
+            if pubsub:
+                try:
+                    await pubsub.close()
+                except Exception:
+                    pass
+            if redis:
+                try:
+                    await redis.aclose()
+                except Exception:
+                    pass
+            async for chunk in poll_generator():
+                yield chunk
+            return
+
+        elapsed = 0
+        try:
+            while elapsed < timeout:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message and message["type"] == "message":
+                    data = message["data"]
+                    yield f"data: {data}\n\n"
+                    try:
+                        parsed = json.loads(data)
+                        if parsed.get("event") in terminal_events:
+                            break
+                    except json.JSONDecodeError:
+                        pass
+                else:
+                    elapsed += 1
+                    if elapsed % 15 == 0:
+                        yield ": ping\n\n"
+                await asyncio.sleep(0)
+        finally:
+            try:
+                await pubsub.unsubscribe(get_pubsub_channel(job_id))
+                await pubsub.close()
+                await redis.aclose()
+            except Exception:
+                pass
 
     return StreamingResponse(
-        generator,
+        combined_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -268,8 +248,6 @@ async def stream_progress(job_id: str, db: AsyncSession = Depends(get_db)):
         },
     )
 
-
-# ── Retry ─────────────────────────────────────────────────────────────────────
 
 @router.post("/jobs/{job_id}/retry", response_model=JobResponse)
 async def retry_job(job_id: str, db: AsyncSession = Depends(get_db)):
@@ -281,8 +259,6 @@ async def retry_job(job_id: str, db: AsyncSession = Depends(get_db)):
     job = await DocumentService.retry_job(jid, db)
     return job
 
-
-# ── Result edit & finalize ────────────────────────────────────────────────────
 
 @router.patch("/jobs/{job_id}/result", response_model=ResultResponse)
 async def update_result(
@@ -314,8 +290,6 @@ async def finalize_result(
     return result
 
 
-# ── Export ────────────────────────────────────────────────────────────────────
-
 @router.get("/export/json")
 async def export_json(
     finalized_only: bool = Query(False),
@@ -339,13 +313,13 @@ async def export_csv(
     records = await DocumentService.get_export_data(db, finalized_only)
 
     output = io.StringIO()
-    if records:
-        writer = csv.DictWriter(output, fieldnames=records[0].model_fields.keys())
-        writer.writeheader()
-        for r in records:
-            row = r.model_dump()
-            row["keywords"] = ", ".join(row["keywords"]) if row["keywords"] else ""
-            writer.writerow(row)
+    fieldnames = list(ExportRecord.model_fields.keys()) if not records else list(records[0].model_fields.keys())
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for r in records:
+        row = r.model_dump()
+        row["keywords"] = ", ".join(row["keywords"]) if row["keywords"] else ""
+        writer.writerow(row)
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -353,8 +327,6 @@ async def export_csv(
         headers={"Content-Disposition": "attachment; filename=docflow_export.csv"},
     )
 
-
-# ── Health ────────────────────────────────────────────────────────────────────
 
 @router.get("/health")
 async def health():
