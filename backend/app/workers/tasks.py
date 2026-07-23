@@ -123,7 +123,8 @@ def _extract_text_from_file(
         elif file_type == "pdf":
             from pypdf import PdfReader
             reader = PdfReader(path)
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
+            raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+            return re.sub(r"\s+", " ", raw_text).strip()
         else:
             # Simulate extraction for DOCX etc. (not yet implemented for real)
             filename = os.path.basename(path)
