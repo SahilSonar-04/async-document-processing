@@ -96,7 +96,10 @@ export function useMultiSSE(jobIds: string[]) {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL
         ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
         : "";
-      const es = new EventSource(`${baseUrl}/api/v1/jobs/${jobId}/progress`);
+      const token = useAuthStore.getState().token;
+      const es = new EventSource(
+        `${baseUrl}/api/v1/jobs/${jobId}/progress?token=${encodeURIComponent(token ?? "")}`
+      );
       esRefs.current.set(jobId, es);
 
       es.onmessage = (e) => {

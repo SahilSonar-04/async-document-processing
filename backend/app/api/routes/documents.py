@@ -7,13 +7,13 @@ import uuid as uuid_lib
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, Query, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.session import get_db
 from app.db.redis_client import get_async_redis, get_pubsub_channel, get_cached_job_status
-from app.models.models import JobStatus, Job
+from app.models.models import JobStatus, Job, User, Document
 from app.schemas.schemas import (
     UploadResponse, JobListResponse, JobResponse,
     ResultUpdateRequest, ResultResponse,
@@ -23,7 +23,6 @@ from app.services.document_service import DocumentService
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.security import decode_access_token
-from app.models.models import JobStatus, Job, User, Document
 
 
 logger = logging.getLogger(__name__)
@@ -238,9 +237,18 @@ async def ask_document(job_id: str, request: QuestionRequest, db: AsyncSession =
 
 
 @router.get("/export/json")
-async def export_json(finalized_only: bool = Query(False), db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    records = await DocumentService.get_export_data(db, current_user.id, finalized_only)
-    # ... rest unchanged
+async def export_json(
+    finalized_only: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    records = await DocumentService.get_export_data(
+        db, current_user.id, finalized_only
+    )
+
+    return JSONResponse(
+        content=[record.model_dump(mode="json") for record in records]
+    )
 
 
 @router.get("/export/csv")
