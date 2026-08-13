@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from app.models.models import JobStatus
 
 
@@ -78,6 +78,21 @@ class ResultUpdateRequest(BaseModel):
 
 class FinalizeRequest(BaseModel):
     confirmed: bool = True
+
+
+class QuestionRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+
+
+class ChunkCitation(BaseModel):
+    chunk_index: int
+    snippet: str
+    similarity: float
+
+
+class DocumentAnswerResponse(BaseModel):
+    answer: str
+    citations: list[ChunkCitation]
 
 
 class JobListResponse(BaseModel):

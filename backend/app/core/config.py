@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     llm_max_output_tokens: int = 1024
     llm_max_input_characters: int = 60000
 
+    embedding_model: str = "gemini-embedding-2"
+    embedding_dimensions: int = 768
+    embedding_batch_size: int = 20
+    rag_max_answer_tokens: int = 512
+
     class Config:
         env_file = ".env"
         case_sensitive = False

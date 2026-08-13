@@ -71,6 +71,14 @@ services:
         value: "1024"
       - key: LLM_MAX_INPUT_CHARACTERS
         value: "60000"
+      - key: EMBEDDING_MODEL
+        value: gemini-embedding-2
+      - key: EMBEDDING_DIMENSIONS
+        value: "768"
+      - key: EMBEDDING_BATCH_SIZE
+        value: "20"
+      - key: RAG_MAX_ANSWER_TOKENS
+        value: "512"
 
       # ⚠ Render free tier has ephemeral disk — files in /tmp are wiped on restart.
       # For production, replace with S3/Cloudinary and update DocumentService.

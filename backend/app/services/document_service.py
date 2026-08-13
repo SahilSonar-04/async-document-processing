@@ -5,15 +5,17 @@ import aiofiles
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import UploadFile, HTTPException
-from sqlalchemy import select, func, or_, update
+from sqlalchemy import select, func, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models.models import Document, Job, ProcessingResult, JobStatus
+from app.models.models import Document, DocumentChunk, Job, ProcessingResult, JobStatus
 from app.schemas.schemas import (
-    JobListResponse, JobListItem, ResultUpdateRequest, ExportRecord,
+    DocumentAnswerResponse, ExportRecord, JobListItem, JobListResponse,
+    ResultUpdateRequest,
 )
+from app.services.llm_client import answer_document_question, embed_question
 from app.workers.tasks import process_document_task
 
 MAX_BULK_FILES = 20
@@ -241,6 +243,65 @@ class DocumentService:
         await db.flush()
 
         return result
+
+    @staticmethod
+    async def ask_document(
+        job_id: uuid.UUID, question: str, db: AsyncSession
+    ) -> DocumentAnswerResponse:
+        job = await DocumentService.get_job_detail(job_id, db)
+        if job.status != JobStatus.COMPLETED:
+            raise HTTPException(status_code=409, detail="Document processing is not complete")
+
+        chunk_count = (
+            await db.execute(
+                select(func.count()).select_from(DocumentChunk).where(
+                    DocumentChunk.document_id == job.document_id
+                )
+            )
+        ).scalar_one()
+        if not chunk_count:
+            raise HTTPException(
+                status_code=409,
+                detail="Document Q&A is unavailable because its embedding index was not created",
+            )
+
+        try:
+            query_vector = await embed_question(question)
+            vector_literal = "[" + ",".join(str(value) for value in query_vector) + "]"
+            rows = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT chunk_index, content,
+                               1 - (embedding <=> CAST(:embedding AS vector)) AS similarity
+                        FROM document_chunks
+                        WHERE document_id = :document_id
+                        ORDER BY embedding <=> CAST(:embedding AS vector)
+                        LIMIT 5
+                        """
+                    ),
+                    {"document_id": job.document_id, "embedding": vector_literal},
+                )
+            ).mappings().all()
+            answer = await answer_document_question(
+                question, [row["content"] for row in rows]
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503, detail="Document Q&A is temporarily unavailable"
+            ) from exc
+
+        return DocumentAnswerResponse(
+            answer=answer,
+            citations=[
+                {
+                    "chunk_index": row["chunk_index"],
+                    "snippet": row["content"][:700],
+                    "similarity": round(float(row["similarity"]), 3),
+                }
+                for row in rows
+            ],
+        )
 
     @staticmethod
     async def get_export_data(

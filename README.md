@@ -79,6 +79,15 @@ or its output is unavailable, the job completes with the classical result instea
 - **Gemini mode**: constrained category/keyword output, a 30-second request timeout,
   and per-job model, token, and latency metadata stored with the raw extraction data.
 
+## Document Q&A
+
+Every successfully processed document is split into overlapping word-window chunks and
+embedded with Gemini Embedding 2. The vectors are stored in pgvector alongside the
+document, then the job detail page can retrieve the five closest chunks for a question.
+Gemini answers from those excerpts only, and the UI shows the retrieved source snippets
+and their relevance scores. If embedding is unavailable, extraction still completes and
+the Q&A endpoint reports that the index is unavailable.
+
 It's not going to write a great summary of a 40-page report. For short documents
 (a few paragraphs to a couple pages) it does a reasonable job.
 
@@ -94,6 +103,7 @@ It's not going to write a great summary of a 40-page report. For short documents
 | POST | `/api/v1/jobs/{id}/retry` | Retry a failed job |
 | PATCH | `/api/v1/jobs/{id}/result` | Edit extracted fields (pre-finalize) |
 | POST | `/api/v1/jobs/{id}/finalize` | Lock the result |
+| POST | `/api/v1/jobs/{id}/ask` | Answer a question with retrieved document excerpts |
 | GET | `/api/v1/export/json` | Export results |
 | GET | `/api/v1/export/csv` | Export results |
 

@@ -17,7 +17,7 @@ from app.models.models import JobStatus, Job
 from app.schemas.schemas import (
     UploadResponse, JobListResponse, JobResponse,
     ResultUpdateRequest, ResultResponse,
-    FinalizeRequest, ExportRecord,
+    DocumentAnswerResponse, FinalizeRequest, ExportRecord, QuestionRequest,
 )
 from app.services.document_service import DocumentService
 from app.core.config import settings
@@ -295,6 +295,20 @@ async def finalize_result(
         raise HTTPException(status_code=400, detail="Invalid job ID")
     result = await DocumentService.finalize_result(jid, db)
     return result
+
+
+@router.post("/jobs/{job_id}/ask", response_model=DocumentAnswerResponse)
+async def ask_document(
+    job_id: str,
+    request: QuestionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    import uuid
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    return await DocumentService.ask_document(jid, request.question, db)
 
 
 @router.get("/export/json")

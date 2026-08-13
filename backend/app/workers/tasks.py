@@ -17,8 +17,13 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.workers.celery_app import celery_app
 from app.core.config import settings
 from app.db.redis_client import publish_event_sync
-from app.models.models import Job, ProcessingResult, JobStatus, Document
-from app.services.llm_client import LLMExtractionError, extract_fields_llm
+from app.models.models import Document, DocumentChunk, Job, JobStatus, ProcessingResult
+from app.services.chunking import chunk_text
+from app.services.llm_client import (
+    LLMExtractionError,
+    embed_document_chunks,
+    extract_fields_llm,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -407,9 +412,54 @@ def process_document_task(
         else:
             fields = baseline_fields
 
-        _update_job(session, job_id, progress=80, current_stage="extraction_done")
-        _emit(job_id, "field_extraction_completed", 80, "extraction_done", "Fields extracted")
+        _update_job(session, job_id, progress=75, current_stage="extraction_done")
+        _emit(job_id, "field_extraction_completed", 75, "extraction_done", "Fields extracted")
         time.sleep(0.5)
+
+        chunks = chunk_text(extracted_text)
+        document_uuid = uuid.UUID(document_id)
+        embedding_metadata: dict[str, object]
+        if chunks:
+            _update_job(session, job_id, progress=80, current_stage="embedding")
+            _emit(job_id, "embedding_started", 80, "embedding", "Creating document index...")
+            try:
+                embedding_batch = asyncio.run(embed_document_chunks(chunks))
+                session.query(DocumentChunk).filter(
+                    DocumentChunk.document_id == document_uuid
+                ).delete(synchronize_session=False)
+                session.add_all(
+                    DocumentChunk(
+                        document_id=document_uuid,
+                        chunk_index=index,
+                        content=chunk,
+                        embedding=embedding_batch.vectors[index],
+                    )
+                    for index, chunk in enumerate(chunks)
+                )
+                session.commit()
+                embedding_metadata = {
+                    "status": "completed",
+                    "chunk_count": len(chunks),
+                    **embedding_batch.metadata,
+                }
+                _update_job(session, job_id, progress=88, current_stage="embedding_done")
+                _emit(job_id, "embedding_completed", 88, "embedding_done", "Document index ready")
+            except Exception as exc:
+                session.rollback()
+                logger.warning("Embedding failed for job %s: %s", job_id, exc)
+                embedding_metadata = {
+                    "status": "unavailable",
+                    "chunk_count": 0,
+                    "error": str(exc)[:500],
+                }
+                _update_job(session, job_id, progress=88, current_stage="embedding_skipped")
+                _emit(job_id, "embedding_completed", 88, "embedding_skipped", "Document index unavailable")
+        else:
+            embedding_metadata = {
+                "status": "skipped",
+                "chunk_count": 0,
+                "reason": "No extractable text",
+            }
 
         _update_job(session, job_id, progress=90, current_stage="storing")
         _emit(job_id, "storing_result", 90, "storing", "Storing result...")
@@ -437,6 +487,7 @@ def process_document_task(
                 "storage_path": storage_path,
                 "processed_at": datetime.now(timezone.utc).isoformat(),
                 "extraction_mode": job.extraction_mode if job else "classical",
+                "embedding": embedding_metadata,
             },
         }
         if llm_metadata:
