@@ -23,6 +23,15 @@ def upgrade() -> None:
         "QUEUED", "PROCESSING", "COMPLETED", "FAILED", "CANCELLED", name="jobstatus"
     )
     job_status.create(bind, checkfirst=True)
+    job_status_column = postgresql.ENUM(
+        "QUEUED",
+        "PROCESSING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        name="jobstatus",
+        create_type=False,
+    )
 
     if "documents" not in tables:
         op.create_table(
@@ -43,7 +52,7 @@ def upgrade() -> None:
             sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
             sa.Column("document_id", postgresql.UUID(as_uuid=True), nullable=False),
             sa.Column("celery_task_id", sa.String(length=255), nullable=True),
-            sa.Column("status", job_status, nullable=False),
+            sa.Column("status", job_status_column, nullable=False),
             sa.Column("progress", sa.Integer(), nullable=False),
             sa.Column("current_stage", sa.String(length=100), nullable=True),
             sa.Column("error_message", sa.Text(), nullable=True),
