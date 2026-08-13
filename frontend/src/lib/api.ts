@@ -1,4 +1,6 @@
 import axios, { AxiosError } from "axios";
+import { useAuthStore } from "@/store/authStore";
+
 import type {
   Job,
   JobListResponse,
@@ -20,10 +22,25 @@ const api = axios.create({
   timeout: 60_000,
 });
 
+api.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().token;
+  if (token) {
+    config.headers = config.headers ?? {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 api.interceptors.response.use(
   (res) => res,
   (err: AxiosError) => {
-    // Detect Render cold-start timeout specifically so the UI can show a helpful message
+    if (err.response?.status === 401) {
+      useAuthStore.getState().clearAuth();
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+    }
+
     if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
       return Promise.reject(
         new Error(
@@ -90,6 +107,22 @@ export async function getJob(jobId: string): Promise<Job> {
 export async function retryJob(jobId: string): Promise<Job> {
   const { data } = await api.post<Job>(`/jobs/${jobId}/retry`);
   return data;
+}
+
+// ── Auth────────────────────────────────────────────────────────────
+export async function registerUser(email: string, password: string) {
+  const { data } = await api.post("/auth/register", { email, password });
+  return data as { id: string; email: string; created_at: string };
+}
+
+export async function loginUser(email: string, password: string) {
+  const { data } = await api.post("/auth/login", { email, password });
+  return data as { access_token: string; token_type: string };
+}
+
+export async function getMe() {
+  const { data } = await api.get("/auth/me");
+  return data as { id: string; email: string; created_at: string };
 }
 
 // ── Result editing ────────────────────────────────────────────────────────────

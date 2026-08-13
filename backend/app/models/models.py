@@ -21,6 +21,17 @@ class JobStatus(str, PyEnum):
     CANCELLED = "cancelled"
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    documents: Mapped[list["Document"]] = relationship("Document", back_populates="user")
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -38,6 +49,10 @@ class Document(Base):
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    user: Mapped["User | None"] = relationship("User", back_populates="documents")
 
     job: Mapped["Job"] = relationship("Job", back_populates="document", uselist=False)
     chunks: Mapped[list["DocumentChunk"]] = relationship(

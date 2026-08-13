@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/store/authStore";
 
 const NAV_ITEMS = [
   { href: "/",       label: "Dashboard",  icon: "⊞" },
@@ -11,6 +12,13 @@ const FLOWER_URL = process.env.NEXT_PUBLIC_FLOWER_URL || "http://localhost:5555"
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const user = useAuthStore((s) => s.user);
+  const clearAuth = useAuthStore((s) => s.clearAuth);
+
+  const handleLogout = () => {
+    clearAuth();
+    router.push("/login");
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -40,6 +48,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   {item.label}
                 </Link>
               ))}
+
               <a
                 href={FLOWER_URL}
                 target="_blank"
@@ -49,6 +58,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <span className="text-xs">◉</span>
                 Flower
               </a>
+
+              {user && (
+                <div className="flex items-center gap-2 pl-3 ml-2 border-l border-gray-200">
+                  <span className="text-sm text-gray-500 hidden sm:inline">
+                    {user.email}
+                  </span>
+                  <button
+                    onClick={handleLogout}
+                    className="px-3 py-1.5 text-sm text-gray-600 rounded-md hover:bg-gray-100"
+                  >
+                    Log out
+                  </button>
+                </div>
+              )}
             </nav>
           </div>
         </div>

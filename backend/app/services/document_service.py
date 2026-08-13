@@ -28,7 +28,7 @@ class DocumentService:
 
     @staticmethod
     async def upload_document(
-        file: UploadFile, db: AsyncSession, extraction_mode: str = "classical"
+        file: UploadFile, db: AsyncSession, user_id: uuid.UUID, extraction_mode: str = "classical"
     ) -> tuple[Document, Job]:
         if extraction_mode not in {"classical", "llm"}:
             raise HTTPException(
@@ -86,6 +86,7 @@ class DocumentService:
             file_size=size,
             storage_path=storage_path,
             file_content=bytes(content),
+            user_id=user_id,
         )
         db.add(document)
         await db.flush()
@@ -114,6 +115,7 @@ class DocumentService:
     @staticmethod
     async def list_jobs(
         db: AsyncSession,
+        user_id: uuid.UUID,
         page: int,
         page_size: int,
         status: JobStatus | None,
@@ -121,12 +123,17 @@ class DocumentService:
         sort_by: str,
         sort_dir: str,
     ) -> JobListResponse:
-        query = select(Job).options(selectinload(Job.document))
+        query = (
+            select(Job)
+            .options(selectinload(Job.document))
+            .join(Job.document)
+            .where(Document.user_id == user_id)
+        )
 
         if status:
             query = query.where(Job.status == status)
         if search:
-            query = query.join(Job.document).where(
+            query = query.where(
                 or_(
                     Document.original_filename.ilike(f"%{search}%"),
                     Document.file_type.ilike(f"%{search}%"),
@@ -157,11 +164,12 @@ class DocumentService:
         )
 
     @staticmethod
-    async def get_job_detail(job_id: uuid.UUID, db: AsyncSession) -> Job:
+    async def get_job_detail(job_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Job:
         query = (
             select(Job)
             .options(selectinload(Job.document), selectinload(Job.result))
-            .where(Job.id == job_id)
+            .join(Job.document)
+            .where(Job.id == job_id, Document.user_id == user_id)
         )
         result = await db.execute(query)
         job = result.scalar_one_or_none()
@@ -170,8 +178,8 @@ class DocumentService:
         return job
 
     @staticmethod
-    async def retry_job(job_id: uuid.UUID, db: AsyncSession) -> Job:
-        job = await DocumentService.get_job_detail(job_id, db)
+    async def retry_job(job_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Job:
+        job = await DocumentService.get_job_detail(job_id, user_id, db)
 
         if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
             raise HTTPException(
@@ -179,9 +187,6 @@ class DocumentService:
                 detail=f"Can only retry failed/cancelled jobs. Current: {job.status}",
             )
 
-        # retry_count incremented at the SQL level (Job.retry_count + 1) instead
-        # of job.retry_count += 1 in Python — avoids a lost update if two retry
-        # requests for the same job land close together.
         await db.execute(
             update(Job)
             .where(Job.id == job_id)
@@ -211,8 +216,10 @@ class DocumentService:
 
     @staticmethod
     async def update_result(
-        job_id: uuid.UUID, update: ResultUpdateRequest, db: AsyncSession
+        job_id: uuid.UUID, user_id: uuid.UUID, update: ResultUpdateRequest, db: AsyncSession
     ) -> ProcessingResult:
+        await DocumentService.get_job_detail(job_id, user_id, db)
+
         query = select(ProcessingResult).where(ProcessingResult.job_id == job_id)
         result = (await db.execute(query)).scalar_one_or_none()
 
@@ -229,7 +236,9 @@ class DocumentService:
         return result
 
     @staticmethod
-    async def finalize_result(job_id: uuid.UUID, db: AsyncSession) -> ProcessingResult:
+    async def finalize_result(job_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> ProcessingResult:
+        await DocumentService.get_job_detail(job_id, user_id, db)
+
         query = select(ProcessingResult).where(ProcessingResult.job_id == job_id)
         result = (await db.execute(query)).scalar_one_or_none()
 
@@ -246,9 +255,9 @@ class DocumentService:
 
     @staticmethod
     async def ask_document(
-        job_id: uuid.UUID, question: str, db: AsyncSession
+        job_id: uuid.UUID, user_id: uuid.UUID, question: str, db: AsyncSession
     ) -> DocumentAnswerResponse:
-        job = await DocumentService.get_job_detail(job_id, db)
+        job = await DocumentService.get_job_detail(job_id, user_id, db)
         if job.status != JobStatus.COMPLETED:
             raise HTTPException(status_code=409, detail="Document processing is not complete")
 
@@ -305,12 +314,13 @@ class DocumentService:
 
     @staticmethod
     async def get_export_data(
-        db: AsyncSession, finalized_only: bool = False
+        db: AsyncSession, user_id: uuid.UUID, finalized_only: bool = False
     ) -> list[ExportRecord]:
         query = (
             select(Job)
             .options(selectinload(Job.document), selectinload(Job.result))
-            .where(Job.status == JobStatus.COMPLETED)
+            .join(Job.document)
+            .where(Job.status == JobStatus.COMPLETED, Document.user_id == user_id)
         )
 
         if finalized_only:
@@ -340,3 +350,4 @@ class DocumentService:
                 )
             )
         return records
+    

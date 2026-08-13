@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 20
     rag_max_answer_tokens: int = 512
 
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60 * 24
+
     class Config:
         env_file = ".env"
         case_sensitive = False

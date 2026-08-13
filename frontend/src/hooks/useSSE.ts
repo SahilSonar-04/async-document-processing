@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useJobStore } from "@/store/jobStore";
 import type { ProgressEvent, JobStatus } from "@/types";
+import { useAuthStore } from "@/store/authStore";
 
 const TERMINAL_EVENTS = new Set(["job_completed", "job_failed", "job_cancelled"]);
 
@@ -19,7 +20,10 @@ export function useSSE(jobId: string | null, enabled = true) {
     const baseUrl = process.env.NEXT_PUBLIC_API_URL
       ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
       : "";
-    const es = new EventSource(`${baseUrl}/api/v1/jobs/${jobId}/progress`);
+    const token = useAuthStore.getState().token;
+    const es = new EventSource(
+      `${baseUrl}/api/v1/jobs/${jobId}/progress?token=${encodeURIComponent(token ?? "")}`
+    ); 
     esRef.current = es;
 
     es.onmessage = (e) => {
