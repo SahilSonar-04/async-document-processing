@@ -57,6 +57,21 @@ services:
       - key: ENVIRONMENT
         value: production
 
+      # Gemini key is entered and stored only in the Render Dashboard.
+      - key: GEMINI_API_KEY
+        sync: false
+
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-3.1-flash-lite
+      - key: LLM_REQUEST_TIMEOUT_SECONDS
+        value: "30"
+      - key: LLM_MAX_OUTPUT_TOKENS
+        value: "1024"
+      - key: LLM_MAX_INPUT_CHARACTERS
+        value: "60000"
+
       # ⚠ Render free tier has ephemeral disk — files in /tmp are wiped on restart.
       # For production, replace with S3/Cloudinary and update DocumentService.
       # For demo purposes /tmp/uploads works as long as processing is fast.
