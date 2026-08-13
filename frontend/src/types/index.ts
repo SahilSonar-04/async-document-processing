@@ -87,6 +87,17 @@ export interface ResultUpdateRequest {
   keywords?: string[];
 }
 
+export interface ChunkCitation {
+  chunk_index: number;
+  snippet: string;
+  similarity: number;
+}
+
+export interface DocumentAnswerResponse {
+  answer: string;
+  citations: ChunkCitation[];
+}
+
 export interface JobFilters {
   status?: JobStatus | "";
   search?: string;

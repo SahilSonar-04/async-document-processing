@@ -5,6 +5,7 @@ import type {
   UploadResponse,
   ProcessingResult,
   ResultUpdateRequest,
+  DocumentAnswerResponse,
   JobFilters,
 } from "@/types";
 
@@ -105,6 +106,14 @@ export async function finalizeResult(jobId: string): Promise<ProcessingResult> {
   const { data } = await api.post<ProcessingResult>(`/jobs/${jobId}/finalize`, {
     confirmed: true,
   });
+  return data;
+}
+
+export async function askDocument(
+  jobId: string,
+  question: string
+): Promise<DocumentAnswerResponse> {
+  const { data } = await api.post<DocumentAnswerResponse>(`/jobs/${jobId}/ask`, { question });
   return data;
 }
 

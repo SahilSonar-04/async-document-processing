@@ -14,6 +14,7 @@ import {
   retryJob,
   updateResult,
   finalizeResult,
+  askDocument,
 } from "@/lib/api";
 import {
   formatBytes,
@@ -22,8 +23,15 @@ import {
   STAGE_LABELS,
   cn,
 } from "@/lib/utils";
-import type { Job, ResultUpdateRequest } from "@/types";
+import type { DocumentAnswerResponse, Job, ResultUpdateRequest } from "@/types";
 import toast from "react-hot-toast";
+
+function formatDocumentAnswer(answer: string) {
+  return answer
+    .replace(/^\s*[-*]\s+/gm, "• ")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1");
+}
 
 export default function JobDetailPage() {
   const router = useRouter();
@@ -36,6 +44,9 @@ export default function JobDetailPage() {
   const [saving, setSaving] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [documentAnswer, setDocumentAnswer] = useState<DocumentAnswerResponse | null>(null);
 
   // Editable fields
   const [editTitle, setEditTitle] = useState("");
@@ -150,6 +161,19 @@ export default function JobDetailPage() {
       toast.error(e instanceof Error ? e.message : "Finalize failed");
     } finally {
       setFinalizing(false);
+    }
+  };
+
+  const handleAskDocument = async () => {
+    if (!jobId || !question.trim()) return;
+    setAsking(true);
+    try {
+      const answer = await askDocument(jobId, question.trim());
+      setDocumentAnswer(answer);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Document Q&A failed");
+    } finally {
+      setAsking(false);
     }
   };
 
@@ -396,6 +420,57 @@ export default function JobDetailPage() {
               >
                 {finalizing ? "Finalizing…" : "✓ Finalize"}
               </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {job.status === "completed" && (
+        <div className="mb-5 rounded-xl border border-gray-200 bg-white p-5">
+          <h2 className="text-base font-semibold text-gray-900">Ask about this document</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Answers use the most relevant indexed excerpts and include their sources.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <input
+              type="text"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAskDocument();
+              }}
+              placeholder="Ask a question about this document"
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+            />
+            <button
+              onClick={handleAskDocument}
+              disabled={asking || question.trim().length < 3}
+              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {asking ? "Asking…" : "Ask"}
+            </button>
+          </div>
+
+          {documentAnswer && (
+            <div className="mt-4 rounded-lg bg-brand-50 p-4 text-sm text-gray-700">
+              <p className="whitespace-pre-wrap leading-6">
+                {formatDocumentAnswer(documentAnswer.answer)}
+              </p>
+              <details className="mt-3 border-t border-brand-100 pt-3">
+                <summary className="cursor-pointer text-xs font-medium text-brand-700">
+                  Sources ({documentAnswer.citations.length})
+                </summary>
+                <div className="mt-3 space-y-3">
+                  {documentAnswer.citations.map((citation) => (
+                    <div key={citation.chunk_index} className="rounded bg-white p-3 text-xs text-gray-600">
+                      <p className="mb-1 font-medium text-gray-700">
+                        Excerpt {citation.chunk_index + 1} · relevance {citation.similarity}
+                      </p>
+                      <p>{citation.snippet}</p>
+                    </div>
+                  ))}
+                </div>
+              </details>
             </div>
           )}
         </div>
