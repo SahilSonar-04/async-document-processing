@@ -27,6 +27,9 @@ if [[ -n "$REDIS_URL" ]]; then
     echo "✅ REDIS_URL          = $REDIS_URL"
 fi
 
+echo "Applying database migrations..."
+alembic upgrade head
+
 echo "Starting Celery worker in the background..."
 # --pool=solo is correct for single-dyno free tier (avoids fork issues)
 # --max-tasks-per-child=50 prevents memory leaks in long-running workers
