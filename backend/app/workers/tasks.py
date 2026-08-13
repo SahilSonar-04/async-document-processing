@@ -1,3 +1,4 @@
+import asyncio
 import time
 import json
 import uuid
@@ -17,6 +18,7 @@ from app.workers.celery_app import celery_app
 from app.core.config import settings
 from app.db.redis_client import publish_event_sync
 from app.models.models import Job, ProcessingResult, JobStatus, Document
+from app.services.llm_client import LLMExtractionError, extract_fields_llm
 
 logger = logging.getLogger(__name__)
 
@@ -384,7 +386,26 @@ def process_document_task(
         _emit(job_id, "field_extraction_started", 60, "extracting", "Extracting fields...")
         time.sleep(1.0)
 
-        fields = _extract_fields(extracted_text, original_filename, file_type)
+        baseline_fields = _extract_fields(extracted_text, original_filename, file_type)
+        llm_metadata = None
+        job = session.query(Job).filter(Job.id == job_id).first()
+        if job and job.extraction_mode == "llm":
+            try:
+                llm_extraction = asyncio.run(
+                    extract_fields_llm(extracted_text, original_filename, baseline_fields)
+                )
+                fields = llm_extraction.fields
+                llm_metadata = llm_extraction.metadata
+            except LLMExtractionError as exc:
+                logger.warning(
+                    "LLM extraction failed for job %s; using classical extraction: %s",
+                    job_id,
+                    exc,
+                )
+                fields = baseline_fields
+                llm_metadata = {"fallback": "classical", "error": str(exc)[:500]}
+        else:
+            fields = baseline_fields
 
         _update_job(session, job_id, progress=80, current_stage="extraction_done")
         _emit(job_id, "field_extraction_completed", 80, "extraction_done", "Fields extracted")
@@ -415,8 +436,11 @@ def process_document_task(
                 "file_type": file_type,
                 "storage_path": storage_path,
                 "processed_at": datetime.now(timezone.utc).isoformat(),
+                "extraction_mode": job.extraction_mode if job else "classical",
             },
         }
+        if llm_metadata:
+            result.raw_json["metadata"]["llm"] = llm_metadata
 
         document = session.query(Document).filter(Document.id == document_id).first()
         if document and document.file_content is not None:

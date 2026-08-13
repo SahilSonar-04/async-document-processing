@@ -34,6 +34,7 @@ export interface Job {
   current_stage: string | null;
   error_message: string | null;
   retry_count: number;
+  extraction_mode: "classical" | "llm";
   created_at: string;
   updated_at: string;
   completed_at: string | null;

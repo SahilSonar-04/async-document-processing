@@ -25,7 +25,14 @@ class DocumentService:
     MAX_BULK_FILES = MAX_BULK_FILES
 
     @staticmethod
-    async def upload_document(file: UploadFile, db: AsyncSession) -> tuple[Document, Job]:
+    async def upload_document(
+        file: UploadFile, db: AsyncSession, extraction_mode: str = "classical"
+    ) -> tuple[Document, Job]:
+        if extraction_mode not in {"classical", "llm"}:
+            raise HTTPException(
+                status_code=422,
+                detail="extraction_mode must be either 'classical' or 'llm'",
+            )
         if not file.filename:
             raise HTTPException(status_code=400, detail="No filename provided")
 
@@ -81,7 +88,12 @@ class DocumentService:
         db.add(document)
         await db.flush()
 
-        job = Job(document_id=document.id, status=JobStatus.QUEUED, progress=0)
+        job = Job(
+            document_id=document.id,
+            status=JobStatus.QUEUED,
+            progress=0,
+            extraction_mode=extraction_mode,
+        )
         db.add(job)
         await db.commit()
 

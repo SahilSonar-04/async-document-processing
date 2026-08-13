@@ -14,6 +14,7 @@ interface QueuedFile {
 export function DropZone() {
   const [queue, setQueue] = useState<QueuedFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [extractionMode, setExtractionMode] = useState<"classical" | "llm">("classical");
   const router = useRouter();
 
   const onDrop = useCallback((accepted: File[]) => {
@@ -39,7 +40,10 @@ export function DropZone() {
     if (!validFiles.length) return;
     setUploading(true);
     try {
-      const { uploaded, errors } = await uploadDocuments(validFiles.map((q) => q.file));
+      const { uploaded, errors } = await uploadDocuments(
+        validFiles.map((q) => q.file),
+        extractionMode
+      );
       if (uploaded.length) {
         toast.success(`${uploaded.length} file(s) queued for processing`);
       }
@@ -120,6 +124,32 @@ export function DropZone() {
           ))}
         </div>
       )}
+
+      <fieldset className="rounded-lg border border-gray-200 p-4">
+        <legend className="px-1 text-sm font-medium text-gray-700">Extraction mode</legend>
+        <div className="mt-1 flex flex-col gap-2 text-sm text-gray-600 sm:flex-row sm:gap-5">
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="extraction-mode"
+              value="classical"
+              checked={extractionMode === "classical"}
+              onChange={() => setExtractionMode("classical")}
+            />
+            Classical NLP
+          </label>
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="extraction-mode"
+              value="llm"
+              checked={extractionMode === "llm"}
+              onChange={() => setExtractionMode("llm")}
+            />
+            AI (Gemini)
+          </label>
+        </div>
+      </fieldset>
 
       {/* Actions */}
       {queue.length > 0 && (

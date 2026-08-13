@@ -43,9 +43,13 @@ api.interceptors.response.use(
 
 // ── Documents / Jobs ──────────────────────────────────────────────────────────
 
-export async function uploadDocument(file: File): Promise<UploadResponse> {
+export async function uploadDocument(
+  file: File,
+  extractionMode: "classical" | "llm" = "classical"
+): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
+  form.append("extraction_mode", extractionMode);
   const { data } = await api.post<UploadResponse>("/upload", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
@@ -53,10 +57,12 @@ export async function uploadDocument(file: File): Promise<UploadResponse> {
 }
 
 export async function uploadDocuments(
-  files: File[]
+  files: File[],
+  extractionMode: "classical" | "llm" = "classical"
 ): Promise<{ uploaded: UploadResponse[]; errors: { filename: string; error: string }[] }> {
   const form = new FormData();
   files.forEach((f) => form.append("files", f));
+  form.append("extraction_mode", extractionMode);
   const { data } = await api.post("/upload/bulk", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });

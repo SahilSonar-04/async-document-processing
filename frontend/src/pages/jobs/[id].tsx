@@ -266,10 +266,20 @@ export default function JobDetailPage() {
       {/* Result section */}
       {job.result && (
         <div className="bg-white border border-gray-200 rounded-xl p-5 mb-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-900">
-              Extracted Output
-            </h2>
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-gray-900">Extracted Output</h2>
+              <span
+                className={cn(
+                  "rounded-full px-2.5 py-1 text-xs font-medium",
+                  job.extraction_mode === "llm"
+                    ? "bg-violet-100 text-violet-700"
+                    : "bg-slate-100 text-slate-700"
+                )}
+              >
+                {job.extraction_mode === "llm" ? "AI-generated (Gemini)" : "Classical NLP"}
+              </span>
+            </div>
             {isFinalized && (
               <span className="text-xs font-medium text-green-700 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
                 ✓ Finalized

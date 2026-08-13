@@ -17,6 +17,7 @@ class JobResponse(BaseModel):
     current_stage: str | None
     error_message: str | None
     retry_count: int
+    extraction_mode: str
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None

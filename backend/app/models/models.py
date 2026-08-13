@@ -58,6 +58,9 @@ class Job(Base):
     current_stage: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    extraction_mode: Mapped[str] = mapped_column(
+        String(20), default="classical", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

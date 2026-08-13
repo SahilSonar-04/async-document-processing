@@ -15,9 +15,8 @@ I wanted something that exercised background job processing end to end — not j
 retries, and a review/edit step before the result is considered final. Document
 "extraction" here means real text extraction (PDF via pypdf, DOCX via python-docx,
 plain text/CSV/JSON/MD read directly) plus a small extractive-summarization and
-RAKE-keyword pipeline — not an LLM call, just classic NLP. Good enough to be honestly
-useful for short-to-medium documents, not going to compete with anything backed by an
-actual model.
+RAKE-keyword pipeline. It also offers an optional Gemini extraction mode, so the
+classical baseline remains available for fast, deterministic, and zero-API-cost jobs.
 
 ## Running it
 
@@ -28,6 +27,10 @@ cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
 docker compose up --build
 ```
+
+Set `GEMINI_API_KEY` in `backend/.env` before selecting **AI (Gemini)** at upload.
+Classical NLP remains the default and does not need an API key. The backend applies
+Alembic migrations automatically when the Compose stack starts.
 
 - Frontend: http://localhost:3000
 - API docs: http://localhost:8000/docs
@@ -60,8 +63,9 @@ Export pulls finalized (or all completed) records as JSON or CSV.
 
 ## What's actually happening in "extraction"
 
-No ML here on purpose — wanted to see how far you get with straightforward text
-processing before reaching for an LLM.
+Classical NLP is the default. Gemini is an alternative mode for document metadata
+extraction, with structured JSON output and a bounded retry/repair path. If the model
+or its output is unavailable, the job completes with the classical result instead.
 
 - **Summarization**: sentence splitting, then a frequency-weighted score per sentence
   (mild bias toward earlier sentences), top-N picked and put back in original order.
@@ -72,6 +76,8 @@ processing before reaching for an LLM.
 - **DOCX**: `python-docx`, pulls paragraph text and table cell contents.
 - **PDF**: `pypdf`, page-by-page text extraction (doesn't handle scanned/image PDFs —
   no OCR).
+- **Gemini mode**: constrained category/keyword output, a 30-second request timeout,
+  and per-job model, token, and latency metadata stored with the raw extraction data.
 
 It's not going to write a great summary of a 40-page report. For short documents
 (a few paragraphs to a couple pages) it does a reasonable job.
@@ -109,14 +115,15 @@ demo actually works on infra that doesn't support pub/sub, instead of silently h
 summary, etc.) never touches the original extraction, which stays in `raw_json`. Felt
 like the safer default for a "review and edit" workflow.
 
+**Classical and AI extraction modes** — the classical path is the fallback and a useful
+baseline for comparing cost, latency, determinism, and output quality against Gemini.
+
 ## Known rough edges
 
 Being upfront about what's not solid, roughly in order of how much I'd worry about them:
 
 - No auth. Every endpoint is open. Fine for a local demo, not fine for anything real.
 - No automated tests yet — this is next on my list.
-- `Base.metadata.create_all()` runs on startup instead of real migrations. Alembic is
-  in `requirements.txt` but not actually wired up.
 - No rate limiting anywhere.
 - Bulk upload is capped at 20 files/request and streamed to disk with a size limit
   enforced during the read (not after), but there's still no per-IP throttling.

@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     sse_poll_interval: float = 1.5
     sse_timeout: int = 75
 
+    gemini_api_key: str | None = None
+    llm_provider: str = "gemini"
+    llm_model: str = "gemini-3.1-flash-lite"
+    llm_request_timeout_seconds: int = 30
+    llm_max_output_tokens: int = 1024
+    llm_max_input_characters: int = 60000
+
     class Config:
         env_file = ".env"
         case_sensitive = False

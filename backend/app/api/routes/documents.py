@@ -6,7 +6,7 @@ import logging
 import uuid as uuid_lib
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException
+from fastapi import APIRouter, Depends, File, Form, UploadFile, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -29,9 +29,10 @@ router = APIRouter()
 @router.post("/upload", response_model=UploadResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
+    extraction_mode: str = Form("classical"),
     db: AsyncSession = Depends(get_db),
 ):
-    document, job = await DocumentService.upload_document(file, db)
+    document, job = await DocumentService.upload_document(file, db, extraction_mode)
     return UploadResponse(
         document_id=document.id,
         job_id=job.id,
@@ -44,8 +45,14 @@ async def upload_document(
 @router.post("/upload/bulk", status_code=201)
 async def upload_multiple(
     files: list[UploadFile] = File(...),
+    extraction_mode: str = Form("classical"),
     db: AsyncSession = Depends(get_db),
 ):
+    if extraction_mode not in {"classical", "llm"}:
+        raise HTTPException(
+            status_code=422,
+            detail="extraction_mode must be either 'classical' or 'llm'",
+        )
     if len(files) > DocumentService.MAX_BULK_FILES:
         raise HTTPException(
             status_code=400,
@@ -56,7 +63,7 @@ async def upload_multiple(
     errors = []
     for file in files:
         try:
-            document, job = await DocumentService.upload_document(file, db)
+            document, job = await DocumentService.upload_document(file, db, extraction_mode)
             results.append(UploadResponse(
                 document_id=document.id,
                 job_id=job.id,
