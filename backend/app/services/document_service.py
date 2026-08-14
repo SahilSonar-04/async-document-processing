@@ -109,6 +109,7 @@ class DocumentService:
         )
         job.celery_task_id = task.id
         await db.commit()
+        await db.refresh(job, attribute_names=["updated_at"])
 
         return document, job
 
@@ -211,6 +212,7 @@ class DocumentService:
         )
         job.celery_task_id = task.id
         await db.commit()
+        await db.refresh(job, attribute_names=["updated_at"])
 
         return job
 
