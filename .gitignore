@@ -41,3 +41,8 @@ Thumbs.db
 uploads/
 sample_files/
 sample_exports/
+
+# ── Test artifacts ──────────────────────────────────────────
+backend/.coverage
+backend/.pytest_cache/
+frontend/coverage/
