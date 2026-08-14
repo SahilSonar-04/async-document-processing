@@ -35,7 +35,6 @@ jobs:
 
       - name: Lint
         run: npm run lint
-        continue-on-error: true
 
       - name: Type-check
         run: npm run type-check
@@ -54,4 +53,3 @@ jobs:
 
       - name: Build frontend image
         run: docker build -t docflow-frontend-ci ./frontend
-        

@@ -111,7 +111,7 @@ export default function JobDetailPage() {
 
       return () => clearTimeout(timer);
     }
-  }, [liveProgress?.event, jobId]); // only re-run when the event TYPE changes
+  }, [liveProgress, jobId]);
 
   const handleRetry = async () => {
     if (!jobId) return;

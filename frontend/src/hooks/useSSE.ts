@@ -146,10 +146,13 @@ export function useMultiSSE(jobIds: string[]) {
   }, [JSON.stringify(jobIds)]);
 
   useEffect(() => {
+    const currentEsRefs = esRefs.current;
+    const currentDoneJobs = doneJobs.current;
+
     return () => {
-      for (const es of esRefs.current.values()) es.close();
-      esRefs.current.clear();
-      doneJobs.current.clear();
+      for (const es of currentEsRefs.values()) es.close();
+      currentEsRefs.clear();
+      currentDoneJobs.clear();
     };
   }, []);
 }
