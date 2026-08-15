@@ -130,6 +130,21 @@ class AgentAnswerResponse(BaseModel):
     tool_trace: list[AgentStepResponse]
 
 
+class AgentQueryHistoryItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    question: str
+    answer: str
+    steps_taken: int
+    tool_trace: list[AgentStepResponse]
+    created_at: datetime
+
+
+class AgentHistoryResponse(BaseModel):
+    items: list[AgentQueryHistoryItem]
+
+
 class JobListResponse(BaseModel):
     items: list[JobListItem]
     total: int

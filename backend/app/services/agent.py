@@ -5,9 +5,11 @@ from typing import Any
 
 from google import genai
 from google.genai import types
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.models import AgentQuery
 from app.services import agent_tools
 
 MAX_STEPS = 4
@@ -100,6 +102,36 @@ class AgentError(RuntimeError):
     pass
 
 
+async def _persist_query(
+    db: AsyncSession, user_id: uuid.UUID, question: str, result: AgentResult
+) -> None:
+    record = AgentQuery(
+        user_id=user_id,
+        question=question,
+        answer=result.answer,
+        tool_trace=[
+            {"tool": step.tool, "args": step.args, "result": step.result, "error": step.error}
+            for step in result.steps
+        ],
+        steps_taken=len(result.steps),
+    )
+    db.add(record)
+    await db.commit()
+
+
+async def get_agent_history(
+    db: AsyncSession, user_id: uuid.UUID, limit: int = 20
+) -> list[AgentQuery]:
+    query = (
+        select(AgentQuery)
+        .where(AgentQuery.user_id == user_id)
+        .order_by(AgentQuery.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
 async def _dispatch_tool(
     db: AsyncSession, user_id: uuid.UUID, name: str, args: dict[str, Any]
 ) -> Any:
@@ -161,7 +193,9 @@ async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> Agen
             answer = (response.text or "").strip()
             if not answer:
                 raise AgentError("Agent returned an empty answer")
-            return AgentResult(answer=answer, steps=steps)
+            result = AgentResult(answer=answer, steps=steps)
+            await _persist_query(db, user_id, question, result)
+            return result
 
         contents.append(candidate.content)
         function_response_parts = []

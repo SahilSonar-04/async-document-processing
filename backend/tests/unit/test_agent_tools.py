@@ -10,4 +10,3 @@ def test_agent_tool_error_message_is_plain_string():
 
 def test_default_top_k_is_positive():
     assert agent_tools.DEFAULT_TOP_K > 0
-    

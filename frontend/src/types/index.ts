@@ -111,6 +111,19 @@ export interface AgentAnswerResponse {
   tool_trace: AgentStep[];
 }
 
+export interface AgentQueryHistoryItem {
+  id: string;
+  question: string;
+  answer: string;
+  steps_taken: number;
+  tool_trace: AgentStep[];
+  created_at: string;
+}
+
+export interface AgentHistoryResponse {
+  items: AgentQueryHistoryItem[];
+}
+
 export interface JobFilters {
   status?: JobStatus | "";
   search?: string;

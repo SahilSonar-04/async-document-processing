@@ -9,6 +9,7 @@ import type {
   ResultUpdateRequest,
   DocumentAnswerResponse,
   AgentAnswerResponse,
+  AgentHistoryResponse,
   JobFilters,
 } from "@/types";
 
@@ -151,6 +152,13 @@ export async function askDocument(
 
 export async function askAgent(question: string): Promise<AgentAnswerResponse> {
   const { data } = await api.post<AgentAnswerResponse>("/agent/ask", { question });
+  return data;
+}
+
+export async function getAgentHistory(limit = 10): Promise<AgentHistoryResponse> {
+  const { data } = await api.get<AgentHistoryResponse>("/agent/history", {
+    params: { limit },
+  });
   return data;
 }
 

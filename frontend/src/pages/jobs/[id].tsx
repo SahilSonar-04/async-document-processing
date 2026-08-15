@@ -8,6 +8,7 @@ import { ProgressBar } from "@/components/ProgressBar";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
 import { Spinner } from "@/components/Spinner";
 import { AgentTracePanel } from "@/components/AgentTracePanel";
+import { AgentHistoryPanel } from "@/components/AgentHistoryPanel";
 import { useSSE } from "@/hooks/useSSE";
 import { useJobStore } from "@/store/jobStore";
 import {
@@ -59,6 +60,7 @@ export default function JobDetailPage() {
   const [agentQuestion, setAgentQuestion] = useState("");
   const [agentAsking, setAgentAsking] = useState(false);
   const [agentAnswer, setAgentAnswer] = useState<AgentAnswerResponse | null>(null);
+  const [agentHistoryKey, setAgentHistoryKey] = useState(0);
 
   // Editable fields
   const [editTitle, setEditTitle] = useState("");
@@ -193,6 +195,7 @@ export default function JobDetailPage() {
     try {
       const answer = await askAgent(agentQuestion.trim());
       setAgentAnswer(answer);
+      setAgentHistoryKey((k) => k + 1);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Agent Q&A failed");
     } finally {
@@ -539,6 +542,8 @@ export default function JobDetailPage() {
               <AgentTracePanel steps={agentAnswer.tool_trace} />
             </div>
           )}
+
+          <AgentHistoryPanel refreshKey={agentHistoryKey} />
         </div>
       )}
 
