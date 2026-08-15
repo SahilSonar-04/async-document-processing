@@ -117,6 +117,19 @@ class DocumentAnswerResponse(BaseModel):
     citations: list[ChunkCitation]
 
 
+class AgentStepResponse(BaseModel):
+    tool: str
+    args: dict[str, Any]
+    result: Any | None = None
+    error: str | None = None
+
+
+class AgentAnswerResponse(BaseModel):
+    answer: str
+    steps_taken: int
+    tool_trace: list[AgentStepResponse]
+
+
 class JobListResponse(BaseModel):
     items: list[JobListItem]
     total: int
