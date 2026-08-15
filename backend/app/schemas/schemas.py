@@ -115,6 +115,8 @@ class ChunkCitation(BaseModel):
 class DocumentAnswerResponse(BaseModel):
     answer: str
     citations: list[ChunkCitation]
+    latency_ms: int
+    llm_call_count: int
 
 
 class AgentStepResponse(BaseModel):
@@ -128,6 +130,8 @@ class AgentAnswerResponse(BaseModel):
     answer: str
     steps_taken: int
     tool_trace: list[AgentStepResponse]
+    latency_ms: int
+    llm_call_count: int
 
 
 class AgentQueryHistoryItem(BaseModel):
@@ -139,6 +143,8 @@ class AgentQueryHistoryItem(BaseModel):
     steps_taken: int
     tool_trace: list[AgentStepResponse]
     created_at: datetime
+    latency_ms: int
+    llm_call_count: int
 
 
 class AgentHistoryResponse(BaseModel):

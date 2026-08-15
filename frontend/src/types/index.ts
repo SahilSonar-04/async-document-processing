@@ -96,6 +96,8 @@ export interface ChunkCitation {
 export interface DocumentAnswerResponse {
   answer: string;
   citations: ChunkCitation[];
+  latency_ms: number;
+  llm_call_count: number;
 }
 
 export interface AgentStep {
@@ -109,6 +111,8 @@ export interface AgentAnswerResponse {
   answer: string;
   steps_taken: number;
   tool_trace: AgentStep[];
+  latency_ms: number;
+  llm_call_count: number;
 }
 
 export interface AgentQueryHistoryItem {
@@ -118,11 +122,27 @@ export interface AgentQueryHistoryItem {
   steps_taken: number;
   tool_trace: AgentStep[];
   created_at: string;
+  latency_ms: number;
+  llm_call_count: number;
 }
 
 export interface AgentHistoryResponse {
   items: AgentQueryHistoryItem[];
 }
+
+export type AgentStreamEvent =
+  | { event: "reasoning_started"; step: number }
+  | { event: "tool_call_started"; tool: string; args: Record<string, unknown> }
+  | { event: "tool_call_completed"; tool: string; result: unknown }
+  | { event: "tool_call_failed"; tool: string; error: string }
+  | {
+      event: "final_answer";
+      answer: string;
+      steps_taken: number;
+      latency_ms: number;
+      llm_call_count: number;
+    }
+  | { event: "error"; message: string };
 
 export interface JobFilters {
   status?: JobStatus | "";

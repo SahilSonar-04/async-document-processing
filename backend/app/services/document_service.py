@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import math
 import aiofiles
@@ -259,6 +260,8 @@ class DocumentService:
     async def ask_document(
         job_id: uuid.UUID, user_id: uuid.UUID, question: str, db: AsyncSession
     ) -> DocumentAnswerResponse:
+        started_at = time.perf_counter()
+
         job = await DocumentService.get_job_detail(job_id, user_id, db)
         if job.status != JobStatus.COMPLETED:
             raise HTTPException(status_code=409, detail="Document processing is not complete")
@@ -276,8 +279,11 @@ class DocumentService:
                 detail="Document Q&A is unavailable because its embedding index was not created",
             )
 
+        llm_call_count = 0
         try:
             query_vector = await embed_question(question)
+            llm_call_count += 1
+
             vector_literal = "[" + ",".join(str(value) for value in query_vector) + "]"
             rows = (
                 await db.execute(
@@ -294,13 +300,17 @@ class DocumentService:
                     {"document_id": job.document_id, "embedding": vector_literal},
                 )
             ).mappings().all()
+
             answer = await answer_document_question(
                 question, [row["content"] for row in rows]
             )
+            llm_call_count += 1
         except Exception as exc:
             raise HTTPException(
                 status_code=503, detail="Document Q&A is temporarily unavailable"
             ) from exc
+
+        latency_ms = round((time.perf_counter() - started_at) * 1000)
 
         return DocumentAnswerResponse(
             answer=answer,
@@ -312,6 +322,8 @@ class DocumentService:
                 }
                 for row in rows
             ],
+            latency_ms=latency_ms,
+            llm_call_count=llm_call_count,
         )
 
     @staticmethod

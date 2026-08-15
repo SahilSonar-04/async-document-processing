@@ -1,7 +1,8 @@
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from google import genai
 from google.genai import types
@@ -96,6 +97,8 @@ class AgentStep:
 class AgentResult:
     answer: str
     steps: list[AgentStep] = field(default_factory=list)
+    latency_ms: int = 0
+    llm_call_count: int = 0
 
 
 class AgentError(RuntimeError):
@@ -114,6 +117,8 @@ async def _persist_query(
             for step in result.steps
         ],
         steps_taken=len(result.steps),
+        latency_ms=result.latency_ms,
+        llm_call_count=result.llm_call_count,
     )
     db.add(record)
     await db.commit()
@@ -156,10 +161,13 @@ async def _dispatch_tool(
     raise AgentError(f"Unknown tool: {name}")
 
 
-async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> AgentResult:
+async def run_agent_stream(
+    db: AsyncSession, user_id: uuid.UUID, question: str
+) -> AsyncGenerator[dict[str, Any], None]:
     if not settings.gemini_api_key:
         raise AgentError("GEMINI_API_KEY is not configured")
 
+    started_at = time.perf_counter()
     client = genai.Client(api_key=settings.gemini_api_key)
     config = types.GenerateContentConfig(
         system_instruction=_AGENT_SYSTEM_PROMPT,
@@ -171,8 +179,11 @@ async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> Agen
         types.Content(role="user", parts=[types.Part(text=question)])
     ]
     steps: list[AgentStep] = []
+    llm_call_count = 0
 
-    for _ in range(MAX_STEPS):
+    for step_num in range(MAX_STEPS):
+        yield {"event": "reasoning_started", "step": step_num + 1}
+
         try:
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(
@@ -180,9 +191,12 @@ async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> Agen
                 ),
                 timeout=settings.llm_request_timeout_seconds,
             )
+            llm_call_count += 1
         except asyncio.TimeoutError as exc:
+            yield {"event": "error", "message": "Agent step timed out"}
             raise AgentError("Agent step timed out") from exc
         except Exception as exc:
+            yield {"event": "error", "message": str(exc)}
             raise AgentError(str(exc)) from exc
 
         candidate = response.candidates[0] if response.candidates else None
@@ -192,10 +206,26 @@ async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> Agen
         if not function_calls:
             answer = (response.text or "").strip()
             if not answer:
+                yield {"event": "error", "message": "Agent returned an empty answer"}
                 raise AgentError("Agent returned an empty answer")
-            result = AgentResult(answer=answer, steps=steps)
+
+            latency_ms = round((time.perf_counter() - started_at) * 1000)
+            result = AgentResult(
+                answer=answer,
+                steps=steps,
+                latency_ms=latency_ms,
+                llm_call_count=llm_call_count,
+            )
             await _persist_query(db, user_id, question, result)
-            return result
+
+            yield {
+                "event": "final_answer",
+                "answer": answer,
+                "steps_taken": len(steps),
+                "latency_ms": latency_ms,
+                "llm_call_count": llm_call_count,
+            }
+            return
 
         contents.append(candidate.content)
         function_response_parts = []
@@ -203,32 +233,63 @@ async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> Agen
         for call in function_calls:
             args = dict(call.args or {})
             step = AgentStep(tool=call.name, args=args)
+            yield {"event": "tool_call_started", "tool": call.name, "args": args}
+
             try:
-                result = await asyncio.wait_for(
+                tool_result = await asyncio.wait_for(
                     _dispatch_tool(db, user_id, call.name, args),
                     timeout=settings.llm_request_timeout_seconds,
                 )
-                step.result = result
+                step.result = tool_result
                 function_response_parts.append(
-                    types.Part.from_function_response(name=call.name, response={"result": result})
+                    types.Part.from_function_response(name=call.name, response={"result": tool_result})
                 )
+                yield {"event": "tool_call_completed", "tool": call.name, "result": tool_result}
             except asyncio.TimeoutError:
                 step.error = "Tool call timed out"
                 function_response_parts.append(
                     types.Part.from_function_response(name=call.name, response={"error": step.error})
                 )
+                yield {"event": "tool_call_failed", "tool": call.name, "error": step.error}
             except agent_tools.AgentToolError as exc:
                 step.error = str(exc)
                 function_response_parts.append(
                     types.Part.from_function_response(name=call.name, response={"error": step.error})
                 )
+                yield {"event": "tool_call_failed", "tool": call.name, "error": step.error}
             except Exception as exc:
                 step.error = str(exc)
                 function_response_parts.append(
                     types.Part.from_function_response(name=call.name, response={"error": step.error})
                 )
+                yield {"event": "tool_call_failed", "tool": call.name, "error": step.error}
+
             steps.append(step)
 
         contents.append(types.Content(role="user", parts=function_response_parts))
 
+    yield {"event": "error", "message": f"Agent did not converge within {MAX_STEPS} steps"}
     raise AgentError(f"Agent did not converge within {MAX_STEPS} steps")
+
+
+async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> AgentResult:
+    steps: list[AgentStep] = []
+    final_event: dict[str, Any] | None = None
+
+    async for event in run_agent_stream(db, user_id, question):
+        if event["event"] == "tool_call_completed":
+            steps.append(AgentStep(tool=event["tool"], args={}, result=event["result"]))
+        elif event["event"] == "tool_call_failed":
+            steps.append(AgentStep(tool=event["tool"], args={}, error=event["error"]))
+        elif event["event"] == "final_answer":
+            final_event = event
+
+    if final_event is None:
+        raise AgentError("Agent did not produce a final answer")
+
+    return AgentResult(
+        answer=final_event["answer"],
+        steps=steps,
+        latency_ms=final_event["latency_ms"],
+        llm_call_count=final_event["llm_call_count"],
+    )
