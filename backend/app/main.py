@@ -24,8 +24,3 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1", tags=["auth"])
 app.include_router(documents_router, prefix="/api/v1", tags=["documents"])
 app.include_router(agent_router, prefix="/api/v1", tags=["agent"])
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "service": settings.app_name}
