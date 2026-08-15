@@ -10,6 +10,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from celery import Task
 from celery.exceptions import MaxRetriesExceededError
+from celery.signals import worker_process_init
 from langdetect import detect, DetectorFactory, LangDetectException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -36,6 +37,12 @@ sync_engine = create_engine(
     pool_recycle=300,
 )
 SyncSession = sessionmaker(bind=sync_engine, autoflush=False, autocommit=False)
+
+
+@worker_process_init.connect
+def _dispose_engine_after_fork(**kwargs):
+    sync_engine.dispose()
+
 
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
