@@ -29,21 +29,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/jobs/{job_id}/progress")
-async def stream_progress(job_id: str, token: str | None = Query(None), db: AsyncSession = Depends(get_db)):
-    import uuid
-    try:
-        job_uuid = uuid.UUID(job_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid job ID")
-
+async def _resolve_user_from_token(token: str | None, db: AsyncSession) -> uuid_lib.UUID:
     subject = decode_access_token(token) if token else None
     if not subject:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     try:
-        user_uuid = uuid.UUID(subject)
+        user_uuid = uuid_lib.UUID(subject)
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_check = await db.execute(select(User.id).where(User.id == user_uuid))
+    if not user_check.scalar_one_or_none():
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return user_uuid
+
+
+@router.get("/jobs/{job_id}/progress")
+async def stream_progress(job_id: str, token: str | None = Query(None), db: AsyncSession = Depends(get_db)):
+    try:
+        job_uuid = uuid_lib.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+
+    user_uuid = await _resolve_user_from_token(token, db)
 
     owner_check = await db.execute(
         select(Job.id).join(Job.document).where(Job.id == job_uuid, Document.user_id == user_uuid)
@@ -86,7 +95,9 @@ async def stream_progress(job_id: str, token: str | None = Query(None), db: Asyn
             if not event_payload:
                 try:
                     result = await db.execute(
-                        select(Job).where(Job.id == uuid_lib.UUID(job_id))
+                        select(Job)
+                        .where(Job.id == uuid_lib.UUID(job_id))
+                        .execution_options(populate_existing=True)
                     )
                     job_row = result.scalar_one_or_none()
                     if job_row:

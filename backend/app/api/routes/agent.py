@@ -3,6 +3,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
@@ -64,6 +65,10 @@ async def agent_ask_stream(
     try:
         user_id = uuid.UUID(subject)
     except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_check = await db.execute(select(User.id).where(User.id == user_id))
+    if not user_check.scalar_one_or_none():
         raise HTTPException(status_code=401, detail="Invalid token")
 
     def _sse(payload: dict) -> str:

@@ -274,13 +274,28 @@ async def run_agent_stream(
 
 async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> AgentResult:
     steps: list[AgentStep] = []
+    pending_args: dict[str, dict[str, Any]] = {}
     final_event: dict[str, Any] | None = None
 
     async for event in run_agent_stream(db, user_id, question):
-        if event["event"] == "tool_call_completed":
-            steps.append(AgentStep(tool=event["tool"], args={}, result=event["result"]))
+        if event["event"] == "tool_call_started":
+            pending_args[event["tool"]] = event["args"]
+        elif event["event"] == "tool_call_completed":
+            steps.append(
+                AgentStep(
+                    tool=event["tool"],
+                    args=pending_args.get(event["tool"], {}),
+                    result=event["result"],
+                )
+            )
         elif event["event"] == "tool_call_failed":
-            steps.append(AgentStep(tool=event["tool"], args={}, error=event["error"]))
+            steps.append(
+                AgentStep(
+                    tool=event["tool"],
+                    args=pending_args.get(event["tool"], {}),
+                    error=event["error"],
+                )
+            )
         elif event["event"] == "final_answer":
             final_event = event
 
