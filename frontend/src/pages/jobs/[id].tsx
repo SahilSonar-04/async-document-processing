@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ProgressBar } from "@/components/ProgressBar";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
 import { Spinner } from "@/components/Spinner";
+import { AgentTracePanel } from "@/components/AgentTracePanel";
 import { useSSE } from "@/hooks/useSSE";
 import { useJobStore } from "@/store/jobStore";
 import {
@@ -15,6 +16,7 @@ import {
   updateResult,
   finalizeResult,
   askDocument,
+  askAgent,
 } from "@/lib/api";
 import {
   formatBytes,
@@ -23,7 +25,12 @@ import {
   STAGE_LABELS,
   cn,
 } from "@/lib/utils";
-import type { DocumentAnswerResponse, Job, ResultUpdateRequest } from "@/types";
+import type {
+  AgentAnswerResponse,
+  DocumentAnswerResponse,
+  Job,
+  ResultUpdateRequest,
+} from "@/types";
 import toast from "react-hot-toast";
 
 function formatDocumentAnswer(answer: string) {
@@ -48,6 +55,11 @@ export default function JobDetailPage() {
   const [asking, setAsking] = useState(false);
   const [documentAnswer, setDocumentAnswer] = useState<DocumentAnswerResponse | null>(null);
 
+  // Agentic cross-document Q&A
+  const [agentQuestion, setAgentQuestion] = useState("");
+  const [agentAsking, setAgentAsking] = useState(false);
+  const [agentAnswer, setAgentAnswer] = useState<AgentAnswerResponse | null>(null);
+
   // Editable fields
   const [editTitle, setEditTitle] = useState("");
   const [editCategory, setEditCategory] = useState("");
@@ -58,7 +70,6 @@ export default function JobDetailPage() {
   const liveProgress = useJobStore((s) => (jobId ? s.progress[jobId] : null));
   useSSE(jobId, job?.status === "queued" || job?.status === "processing");
 
-  // ✅ FIX: guard so we only fire one getJob refresh per terminal event
   const refreshedForEvent = useRef<string | null>(null);
 
   // Fetch job detail on mount / jobId change
@@ -89,7 +100,6 @@ export default function JobDetailPage() {
     const isTerminal =
       liveProgress.event === "job_completed" || liveProgress.event === "job_failed";
 
-    // ✅ FIX: only fetch if this specific terminal event hasn't been handled yet
     if (isTerminal && refreshedForEvent.current !== liveProgress.event) {
       refreshedForEvent.current = liveProgress.event;
 
@@ -174,6 +184,19 @@ export default function JobDetailPage() {
       toast.error(e instanceof Error ? e.message : "Document Q&A failed");
     } finally {
       setAsking(false);
+    }
+  };
+
+  const handleAskAgent = async () => {
+    if (!agentQuestion.trim()) return;
+    setAgentAsking(true);
+    try {
+      const answer = await askAgent(agentQuestion.trim());
+      setAgentAnswer(answer);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Agent Q&A failed");
+    } finally {
+      setAgentAsking(false);
     }
   };
 
@@ -471,6 +494,49 @@ export default function JobDetailPage() {
                   ))}
                 </div>
               </details>
+            </div>
+          )}
+        </div>
+      )}
+
+      {job.status === "completed" && (
+        <div className="mb-5 rounded-xl border border-gray-200 bg-white p-5">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-gray-900">Ask across your documents</h2>
+            <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700">
+              Agentic
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            A bounded tool-calling agent decides which documents to search, look up, or
+            compare, and shows its full reasoning trace.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <input
+              type="text"
+              value={agentQuestion}
+              onChange={(e) => setAgentQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAskAgent();
+              }}
+              placeholder="Ask something across all of your documents"
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+            />
+            <button
+              onClick={handleAskAgent}
+              disabled={agentAsking || agentQuestion.trim().length < 3}
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {agentAsking ? "Thinking…" : "Ask agent"}
+            </button>
+          </div>
+
+          {agentAnswer && (
+            <div className="mt-4 rounded-lg bg-violet-50 p-4 text-sm text-gray-700">
+              <p className="whitespace-pre-wrap leading-6">
+                {formatDocumentAnswer(agentAnswer.answer)}
+              </p>
+              <AgentTracePanel steps={agentAnswer.tool_trace} />
             </div>
           )}
         </div>

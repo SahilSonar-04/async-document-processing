@@ -98,6 +98,19 @@ export interface DocumentAnswerResponse {
   citations: ChunkCitation[];
 }
 
+export interface AgentStep {
+  tool: string;
+  args: Record<string, unknown>;
+  result: unknown;
+  error: string | null;
+}
+
+export interface AgentAnswerResponse {
+  answer: string;
+  steps_taken: number;
+  tool_trace: AgentStep[];
+}
+
 export interface JobFilters {
   status?: JobStatus | "";
   search?: string;

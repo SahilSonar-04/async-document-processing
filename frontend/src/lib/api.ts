@@ -8,6 +8,7 @@ import type {
   ProcessingResult,
   ResultUpdateRequest,
   DocumentAnswerResponse,
+  AgentAnswerResponse,
   JobFilters,
 } from "@/types";
 
@@ -17,8 +18,6 @@ const baseUrl = process.env.NEXT_PUBLIC_API_URL
 
 const api = axios.create({
   baseURL: baseUrl,
-  // ✅ FIX: Render free tier can take ~30s to wake from sleep.
-  // 60s gives it time to wake + respond without a spurious timeout error.
   timeout: 60_000,
 });
 
@@ -147,6 +146,11 @@ export async function askDocument(
   question: string
 ): Promise<DocumentAnswerResponse> {
   const { data } = await api.post<DocumentAnswerResponse>(`/jobs/${jobId}/ask`, { question });
+  return data;
+}
+
+export async function askAgent(question: string): Promise<AgentAnswerResponse> {
+  const { data } = await api.post<AgentAnswerResponse>("/agent/ask", { question });
   return data;
 }
 
