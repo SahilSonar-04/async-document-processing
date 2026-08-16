@@ -2,36 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 import Link from "next/link";
+import { ArrowLeft, Check } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ProgressBar } from "@/components/ProgressBar";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
 import { Spinner } from "@/components/Spinner";
-import { AgentTracePanel } from "@/components/AgentTracePanel";
-import { AgentHistoryPanel } from "@/components/AgentHistoryPanel";
+import { ChipInput } from "@/components/ChipInput";
+import { JsonTreeViewer } from "@/components/JsonTreeViewer";
 import { useSSE } from "@/hooks/useSSE";
 import { useJobStore } from "@/store/jobStore";
-import { useAgentStream } from "@/hooks/useAgentStream";
-import {
-  getJob,
-  retryJob,
-  updateResult,
-  finalizeResult,
-  askDocument,
-  getAgentHistory as _getAgentHistoryUnused,
-} from "@/lib/api";
-import {
-  formatBytes,
-  formatDate,
-  formatRelative,
-  STAGE_LABELS,
-  cn,
-} from "@/lib/utils";
-import type {
-  DocumentAnswerResponse,
-  Job,
-  ResultUpdateRequest,
-} from "@/types";
+import { getJob, retryJob, updateResult, finalizeResult, askDocument } from "@/lib/api";
+import { formatBytes, formatDate, formatRelative, STAGE_LABELS, cn } from "@/lib/utils";
+import type { DocumentAnswerResponse, Job, ResultUpdateRequest } from "@/types";
 import toast from "react-hot-toast";
 
 function formatDocumentAnswer(answer: string) {
@@ -56,30 +39,16 @@ export default function JobDetailPage() {
   const [asking, setAsking] = useState(false);
   const [documentAnswer, setDocumentAnswer] = useState<DocumentAnswerResponse | null>(null);
 
-  // Agentic cross-document Q&A — streamed live over SSE
-  const [agentQuestion, setAgentQuestion] = useState("");
-  const [agentHistoryKey, setAgentHistoryKey] = useState(0);
-  const agentStream = useAgentStream();
-
-  useEffect(() => {
-    if (agentStream.answer) {
-      setAgentHistoryKey((k) => k + 1);
-    }
-  }, [agentStream.answer]);
-
-  // Editable fields
   const [editTitle, setEditTitle] = useState("");
   const [editCategory, setEditCategory] = useState("");
   const [editSummary, setEditSummary] = useState("");
-  const [editKeywords, setEditKeywords] = useState("");
+  const [editKeywords, setEditKeywords] = useState<string[]>([]);
 
-  // Live progress via SSE
   const liveProgress = useJobStore((s) => (jobId ? s.progress[jobId] : null));
   useSSE(jobId, job?.status === "queued" || job?.status === "processing");
 
   const refreshedForEvent = useRef<string | null>(null);
 
-  // Fetch job detail on mount / jobId change
   useEffect(() => {
     if (!jobId) return;
     setLoading(true);
@@ -93,14 +62,13 @@ export default function JobDetailPage() {
           setEditTitle(data.result.title ?? "");
           setEditCategory(data.result.category ?? "");
           setEditSummary(data.result.summary ?? "");
-          setEditKeywords(data.result.keywords?.join(", ") ?? "");
+          setEditKeywords(data.result.keywords ?? []);
         }
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, [jobId]);
 
-  // Refresh job data when SSE emits a terminal event — exactly once per event
   useEffect(() => {
     if (!liveProgress || !jobId) return;
 
@@ -118,12 +86,10 @@ export default function JobDetailPage() {
               setEditTitle(data.result.title ?? "");
               setEditCategory(data.result.category ?? "");
               setEditSummary(data.result.summary ?? "");
-              setEditKeywords(data.result.keywords?.join(", ") ?? "");
+              setEditKeywords(data.result.keywords ?? []);
             }
           })
-          .catch(() => {
-            // silently ignore — job detail already loaded from initial fetch
-          });
+          .catch(() => {});
       }, 600);
 
       return () => clearTimeout(timer);
@@ -136,7 +102,7 @@ export default function JobDetailPage() {
     try {
       const updated = await retryJob(jobId);
       setJob(updated);
-      refreshedForEvent.current = null; // allow re-refresh after retry
+      refreshedForEvent.current = null;
       toast.success("Job re-queued for processing");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Retry failed");
@@ -153,9 +119,7 @@ export default function JobDetailPage() {
         title: editTitle || undefined,
         category: editCategory || undefined,
         summary: editSummary || undefined,
-        keywords: editKeywords
-          ? editKeywords.split(",").map((k) => k.trim()).filter(Boolean)
-          : undefined,
+        keywords: editKeywords,
       };
       const updated = await updateResult(jobId, update);
       setJob((prev) => (prev ? { ...prev, result: updated } : prev));
@@ -202,11 +166,9 @@ export default function JobDetailPage() {
   if (loading) {
     return (
       <Layout>
-        <div className="flex flex-col items-center justify-center py-20 gap-3">
-          <Spinner className="w-8 h-8" />
-          <p className="text-sm text-gray-400">
-            Loading… (the server may be waking up, please wait a moment)
-          </p>
+        <div className="flex flex-col items-center justify-center gap-3 py-20">
+          <Spinner className="h-8 w-8" />
+          <p className="text-sm text-tertiary">Loading…</p>
         </div>
       </Layout>
     );
@@ -215,9 +177,9 @@ export default function JobDetailPage() {
   if (error || !job) {
     return (
       <Layout>
-        <div className="text-center py-20">
-          <p className="text-red-600 mb-3">{error ?? "Job not found"}</p>
-          <Link href="/" className="text-sm text-brand-600 hover:underline">
+        <div className="py-20 text-center">
+          <p className="mb-3 text-danger">{error ?? "Job not found"}</p>
+          <Link href="/" className="text-sm text-accent hover:underline">
             Back to dashboard
           </Link>
         </div>
@@ -228,75 +190,53 @@ export default function JobDetailPage() {
   return (
     <Layout>
       <Head>
-        <title>
-          {job.document?.original_filename ?? "Job Detail"} | DocFlow
-        </title>
+        <title>{job.document?.original_filename ?? "Job Detail"} | DocFlow</title>
       </Head>
 
-      {/* Breadcrumb */}
       <div className="mb-5">
-        <Link
-          href="/"
-          className="text-sm text-gray-500 hover:text-brand-600 transition-colors"
-        >
-          ← Back to dashboard
+        <Link href="/" className="flex items-center gap-1.5 text-sm text-tertiary hover:text-primary">
+          <ArrowLeft size={14} />
+          Back to dashboard
         </Link>
       </div>
 
-      {/* Header card */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5 mb-5">
+      <div className="mb-5 rounded-lg border border-subtle bg-surface p-5">
         <div className="flex items-start gap-4">
-          <FileTypeIcon
-            type={job.document?.file_type ?? "txt"}
-            className="w-12 h-12 text-sm"
-          />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-3 mb-2">
-              <h1 className="text-lg font-semibold text-gray-900 truncate">
+          <FileTypeIcon type={job.document?.file_type ?? "txt"} className="h-12 w-14 text-xs" />
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h1 className="truncate text-lg font-semibold text-primary">
                 {job.document?.original_filename ?? "Unknown"}
               </h1>
               <StatusBadge status={status} />
             </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-tertiary">
               <span>{formatBytes(job.document?.file_size ?? 0)}</span>
-              <span>Uploaded {formatRelative(job.created_at)}</span>
-              {job.retry_count > 0 && (
-                <span className="text-amber-600">Retry #{job.retry_count}</span>
-              )}
+              <span>uploaded {formatRelative(job.created_at)}</span>
+              {job.retry_count > 0 && <span className="text-warn">retry #{job.retry_count}</span>}
               {job.completed_at && (
-                <span className="text-green-600">
-                  Completed {formatDate(job.completed_at)}
-                </span>
+                <span className="text-accent">completed {formatDate(job.completed_at)}</span>
               )}
             </div>
           </div>
         </div>
 
-        {/* Progress */}
         {(status === "queued" || status === "processing") && (
           <div className="mt-4">
             <ProgressBar progress={progress} status={status} showLabel />
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="mt-1 text-sm text-secondary">
               {STAGE_LABELS[stage ?? "queued"] ?? stage ?? "Waiting…"}
             </p>
-            {liveProgress?.message && (
-              <p className="text-xs text-gray-400 mt-0.5">
-                {liveProgress.message}
-              </p>
-            )}
           </div>
         )}
 
-        {/* Failed — retry button */}
         {status === "failed" && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-700 mb-2">
-              {job.error_message ?? "Processing failed"}
-            </p>
+          <div className="mt-4 rounded-md border border-danger/30 bg-danger/5 p-3">
+            <p className="mb-2 text-sm text-danger">{job.error_message ?? "Processing failed"}</p>
             <button
               onClick={handleRetry}
               disabled={retrying}
-              className="px-4 py-1.5 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              className="rounded-md bg-danger px-4 py-1.5 text-sm font-medium text-canvas hover:opacity-90 disabled:opacity-50"
             >
               {retrying ? "Retrying…" : "Retry job"}
             </button>
@@ -304,138 +244,104 @@ export default function JobDetailPage() {
         )}
       </div>
 
-      {/* Result section */}
       {job.result && (
-        <div className="bg-white border border-gray-200 rounded-xl p-5 mb-5">
-          <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="mb-5 rounded-lg border border-subtle bg-surface p-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-gray-900">Extracted Output</h2>
+              <h2 className="text-base font-semibold text-primary">Extracted output</h2>
               <span
                 className={cn(
-                  "rounded-full px-2.5 py-1 text-xs font-medium",
+                  "rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide",
                   job.extraction_mode === "llm"
-                    ? "bg-violet-100 text-violet-700"
-                    : "bg-slate-100 text-slate-700"
+                    ? "border-accent/30 bg-accent/10 text-accent"
+                    : "border-subtle text-tertiary"
                 )}
               >
-                {job.extraction_mode === "llm" ? "AI-generated (Gemini)" : "Classical NLP"}
+                {job.extraction_mode === "llm" ? "AI (Gemini)" : "Classical"}
               </span>
             </div>
             {isFinalized && (
-              <span className="text-xs font-medium text-green-700 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
-                ✓ Finalized
+              <span className="flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent">
+                <Check size={12} />
+                Finalized
               </span>
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Title */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">
-                Title
-              </label>
+              <label className="mb-1 block text-xs font-medium text-tertiary">Title</label>
               <input
                 type="text"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
                 disabled={isFinalized}
                 className={cn(
-                  "w-full px-3 py-2 border rounded-lg text-sm",
+                  "w-full rounded-md border px-3 py-2 text-sm",
                   isFinalized
-                    ? "bg-gray-50 border-gray-200 text-gray-600"
-                    : "border-gray-300 focus:ring-2 focus:ring-brand-300 focus:border-brand-400"
+                    ? "border-subtle bg-surface-raised/40 text-secondary"
+                    : "border-subtle bg-surface-raised text-primary focus:border-accent focus:outline-none"
                 )}
               />
             </div>
-
-            {/* Category */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">
-                Category
-              </label>
+              <label className="mb-1 block text-xs font-medium text-tertiary">Category</label>
               <input
                 type="text"
                 value={editCategory}
                 onChange={(e) => setEditCategory(e.target.value)}
                 disabled={isFinalized}
                 className={cn(
-                  "w-full px-3 py-2 border rounded-lg text-sm",
+                  "w-full rounded-md border px-3 py-2 text-sm",
                   isFinalized
-                    ? "bg-gray-50 border-gray-200 text-gray-600"
-                    : "border-gray-300 focus:ring-2 focus:ring-brand-300 focus:border-brand-400"
+                    ? "border-subtle bg-surface-raised/40 text-secondary"
+                    : "border-subtle bg-surface-raised text-primary focus:border-accent focus:outline-none"
                 )}
               />
             </div>
-
-            {/* Summary */}
             <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-gray-500 mb-1">
-                Summary
-              </label>
+              <label className="mb-1 block text-xs font-medium text-tertiary">Summary</label>
               <textarea
                 value={editSummary}
                 onChange={(e) => setEditSummary(e.target.value)}
                 disabled={isFinalized}
                 rows={3}
                 className={cn(
-                  "w-full px-3 py-2 border rounded-lg text-sm resize-none",
+                  "w-full resize-none rounded-md border px-3 py-2 text-sm",
                   isFinalized
-                    ? "bg-gray-50 border-gray-200 text-gray-600"
-                    : "border-gray-300 focus:ring-2 focus:ring-brand-300 focus:border-brand-400"
+                    ? "border-subtle bg-surface-raised/40 text-secondary"
+                    : "border-subtle bg-surface-raised text-primary focus:border-accent focus:outline-none"
                 )}
               />
             </div>
-
-            {/* Keywords */}
             <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-gray-500 mb-1">
-                Keywords (comma-separated)
-              </label>
-              <input
-                type="text"
-                value={editKeywords}
-                onChange={(e) => setEditKeywords(e.target.value)}
-                disabled={isFinalized}
-                className={cn(
-                  "w-full px-3 py-2 border rounded-lg text-sm",
-                  isFinalized
-                    ? "bg-gray-50 border-gray-200 text-gray-600"
-                    : "border-gray-300 focus:ring-2 focus:ring-brand-300 focus:border-brand-400"
-                )}
-              />
+              <label className="mb-1 block text-xs font-medium text-tertiary">Keywords</label>
+              <ChipInput values={editKeywords} onChange={setEditKeywords} disabled={isFinalized} />
             </div>
           </div>
 
-          {/* Metadata row */}
-          <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500">
-            {job.result.word_count != null && (
-              <span>Word count: {job.result.word_count}</span>
-            )}
-            {job.result.language && <span>Language: {job.result.language}</span>}
-            {job.result.edited_at && (
-              <span>Last edited: {formatDate(job.result.edited_at)}</span>
-            )}
-            {job.result.finalized_at && (
-              <span>Finalized: {formatDate(job.result.finalized_at)}</span>
-            )}
+          <div className="mt-4 flex flex-wrap gap-4 border-t border-subtle pt-4 font-mono text-xs text-tertiary">
+            {job.result.word_count != null && <span>{job.result.word_count} words</span>}
+            {job.result.language && <span>lang: {job.result.language}</span>}
+            {job.result.edited_at && <span>edited {formatDate(job.result.edited_at)}</span>}
+            {job.result.finalized_at && <span>finalized {formatDate(job.result.finalized_at)}</span>}
           </div>
 
-          {/* Actions */}
           {!isFinalized && (
-            <div className="flex items-center gap-3 mt-4 pt-4 border-t border-gray-100">
+            <div className="mt-4 flex items-center gap-3 border-t border-subtle pt-4">
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-4 py-2 text-sm font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50"
+                className="rounded-md border border-subtle px-4 py-2 text-sm font-medium text-secondary hover:text-primary disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save changes"}
               </button>
               <button
                 onClick={handleFinalize}
                 disabled={finalizing}
-                className="px-4 py-2 text-sm font-medium border border-green-600 text-green-700 rounded-lg hover:bg-green-50 disabled:opacity-50"
+                className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-canvas hover:opacity-90 disabled:opacity-50"
               >
-                {finalizing ? "Finalizing…" : "✓ Finalize"}
+                {finalizing ? "Finalizing…" : "Finalize"}
               </button>
             </div>
           )}
@@ -443,10 +349,10 @@ export default function JobDetailPage() {
       )}
 
       {job.status === "completed" && (
-        <div className="mb-5 rounded-xl border border-gray-200 bg-white p-5">
-          <h2 className="text-base font-semibold text-gray-900">Ask about this document</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Answers use the most relevant indexed excerpts and include their sources.
+        <div className="mb-5 rounded-lg border border-subtle bg-surface p-5">
+          <h2 className="text-base font-semibold text-primary">Ask about this document</h2>
+          <p className="mt-1 text-sm text-tertiary">
+            Answers use the most relevant indexed excerpts and cite their sources.
           </p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row">
             <input
@@ -457,44 +363,38 @@ export default function JobDetailPage() {
                 if (e.key === "Enter") handleAskDocument();
               }}
               placeholder="Ask a question about this document"
-              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+              className="min-w-0 flex-1 rounded-md border border-subtle bg-surface-raised px-3 py-2 text-sm text-primary placeholder:text-tertiary focus:border-accent focus:outline-none"
             />
             <button
               onClick={handleAskDocument}
               disabled={asking || question.trim().length < 3}
-              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-canvas hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {asking ? "Asking…" : "Ask"}
             </button>
           </div>
 
           {documentAnswer && (
-            <div className="mt-4 rounded-lg bg-brand-50 p-4 text-sm text-gray-700">
-              <p className="whitespace-pre-wrap leading-6">
+            <div className="mt-4 rounded-md border border-subtle bg-canvas p-4">
+              <p className="whitespace-pre-wrap text-sm leading-6 text-primary">
                 {formatDocumentAnswer(documentAnswer.answer)}
               </p>
-
-              <p className="mt-2 text-xs text-brand-600">
+              <p className="mt-2 font-mono text-[10px] text-tertiary">
                 {documentAnswer.latency_ms} ms · {documentAnswer.llm_call_count} LLM call
                 {documentAnswer.llm_call_count !== 1 ? "s" : ""}
               </p>
 
-              <details className="mt-3 border-t border-brand-100 pt-3">
-                <summary className="cursor-pointer text-xs font-medium text-brand-700">
+              <details className="mt-3 border-t border-subtle pt-3">
+                <summary className="cursor-pointer text-xs font-medium text-secondary">
                   Sources ({documentAnswer.citations.length})
                 </summary>
-
-                <div className="mt-3 space-y-3">
+                <div className="mt-3 space-y-2">
                   {documentAnswer.citations.map((citation) => (
-                    <div
-                      key={citation.chunk_index}
-                      className="rounded bg-white p-3 text-xs text-gray-600"
-                    >
-                      <p className="mb-1 font-medium text-gray-700">
-                        Excerpt {citation.chunk_index + 1} · relevance{" "}
-                        {citation.similarity}
+                    <div key={citation.chunk_index} className="rounded-md border border-subtle bg-surface p-3">
+                      <p className="mb-1 font-mono text-[10px] text-tertiary">
+                        excerpt {citation.chunk_index + 1} · similarity {citation.similarity}
                       </p>
-                      <p>{citation.snippet}</p>
+                      <p className="text-xs text-secondary">{citation.snippet}</p>
                     </div>
                   ))}
                 </div>
@@ -504,80 +404,7 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      {job.status === "completed" && (
-        <div className="mb-5 rounded-xl border border-gray-200 bg-white p-5">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-gray-900">Ask across your documents</h2>
-            <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700">
-              Agentic
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-gray-500">
-            A bounded tool-calling agent decides which documents to search, look up, or
-            compare, and streams its reasoning trace live as it works.
-          </p>
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-            <input
-              type="text"
-              value={agentQuestion}
-              onChange={(e) => setAgentQuestion(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") agentStream.ask(agentQuestion.trim());
-              }}
-              placeholder="Ask something across all of your documents"
-              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
-            />
-            <button
-              onClick={() => agentStream.ask(agentQuestion.trim())}
-              disabled={agentStream.isStreaming || agentQuestion.trim().length < 3}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {agentStream.isStreaming ? "Thinking…" : "Ask agent"}
-            </button>
-          </div>
-
-          {agentStream.isStreaming && agentStream.steps.length === 0 && (
-            <p className="mt-3 text-xs text-gray-400">Reasoning…</p>
-          )}
-
-          {agentStream.error && (
-            <p className="mt-3 text-sm text-red-600">{agentStream.error}</p>
-          )}
-
-          {(agentStream.answer || agentStream.steps.length > 0) && (
-            <div className="mt-4 rounded-lg bg-violet-50 p-4 text-sm text-gray-700">
-              {agentStream.answer && (
-                <>
-                  <p className="whitespace-pre-wrap leading-6">
-                    {formatDocumentAnswer(agentStream.answer)}
-                  </p>
-                  {agentStream.latencyMs != null && agentStream.llmCallCount != null && (
-                    <p className="mt-2 text-xs text-violet-600">
-                      {agentStream.latencyMs} ms · {agentStream.llmCallCount} LLM call
-                      {agentStream.llmCallCount !== 1 ? "s" : ""}
-                    </p>
-                  )}
-                </>
-              )}
-              <AgentTracePanel steps={agentStream.steps} />
-            </div>
-          )}
-
-          <AgentHistoryPanel refreshKey={agentHistoryKey} />
-        </div>
-      )}
-
-      {/* Raw JSON */}
-      {job.result?.raw_json && (
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="text-base font-semibold text-gray-900 mb-3">
-            Raw Extraction Data
-          </h2>
-          <pre className="bg-gray-50 rounded-lg p-4 text-xs text-gray-700 overflow-x-auto max-h-80">
-            {JSON.stringify(job.result.raw_json, null, 2)}
-          </pre>
-        </div>
-      )}
+      {job.result?.raw_json && <JsonTreeViewer data={job.result.raw_json} title="Raw extraction data" />}
     </Layout>
   );
 }

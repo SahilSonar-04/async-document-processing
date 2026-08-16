@@ -9,35 +9,37 @@ interface Props {
 }
 
 const BAR_COLOR: Record<JobStatus, string> = {
-  queued:     "bg-amber-400",
-  processing: "bg-blue-500",
-  completed:  "bg-green-500",
-  failed:     "bg-red-500",
-  cancelled:  "bg-gray-400",
+  queued: "bg-warn",
+  processing: "bg-accent",
+  completed: "bg-accent",
+  failed: "bg-danger",
+  cancelled: "bg-tertiary",
 };
 
 export function ProgressBar({ progress, status, showLabel = false, className }: Props) {
-  const clampedProgress = Math.min(100, Math.max(0, progress));
+  const clamped = Math.min(100, Math.max(0, progress));
 
   return (
     <div className={cn("w-full", className)}>
-      <div className="flex justify-between items-center mb-1">
-        {showLabel && (
-          <span className="text-xs text-gray-500">Progress</span>
-        )}
-        {showLabel && (
-          <span className="text-xs font-medium text-gray-700">{clampedProgress}%</span>
-        )}
-      </div>
-      <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+      {showLabel && (
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-xs text-tertiary">Progress</span>
+          <span className="font-mono text-xs text-secondary">{clamped}%</span>
+        </div>
+      )}
+      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-raised">
         <div
+          key={clamped}
           className={cn(
-            "h-full rounded-full transition-all duration-500 ease-out",
-            BAR_COLOR[status],
-            status === "processing" && "animate-progress-pulse"
+            "relative h-full overflow-hidden rounded-full transition-all duration-500 ease-out animate-blip",
+            BAR_COLOR[status]
           )}
-          style={{ width: `${clampedProgress}%` }}
-        />
+          style={{ width: `${clamped}%` }}
+        >
+          {status === "processing" && (
+            <div className="absolute inset-y-0 w-1/3 animate-sweep bg-white/25" />
+          )}
+        </div>
       </div>
     </div>
   );

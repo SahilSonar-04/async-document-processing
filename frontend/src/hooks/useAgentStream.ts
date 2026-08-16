@@ -5,6 +5,7 @@ import type { AgentStep, AgentStreamEvent } from "@/types";
 interface AgentStreamState {
   isStreaming: boolean;
   steps: AgentStep[];
+  pendingTool: string | null;
   answer: string | null;
   latencyMs: number | null;
   llmCallCount: number | null;
@@ -14,6 +15,7 @@ interface AgentStreamState {
 const initialState: AgentStreamState = {
   isStreaming: false,
   steps: [],
+  pendingTool: null,
   answer: null,
   latencyMs: null,
   llmCallCount: null,
@@ -58,11 +60,13 @@ export function useAgentStream() {
       switch (event.event) {
         case "tool_call_started":
           pendingArgsRef.current.set(event.tool, event.args);
+          setState((s) => ({ ...s, pendingTool: event.tool }));
           break;
 
         case "tool_call_completed":
           setState((s) => ({
             ...s,
+            pendingTool: null,
             steps: [
               ...s.steps,
               {
@@ -78,6 +82,7 @@ export function useAgentStream() {
         case "tool_call_failed":
           setState((s) => ({
             ...s,
+            pendingTool: null,
             steps: [
               ...s.steps,
               {
@@ -97,13 +102,14 @@ export function useAgentStream() {
             latencyMs: event.latency_ms,
             llmCallCount: event.llm_call_count,
             isStreaming: false,
+            pendingTool: null,
           }));
           es.close();
           esRef.current = null;
           break;
 
         case "error":
-          setState((s) => ({ ...s, error: event.message, isStreaming: false }));
+          setState((s) => ({ ...s, error: event.message, isStreaming: false, pendingTool: null }));
           es.close();
           esRef.current = null;
           break;
@@ -112,7 +118,9 @@ export function useAgentStream() {
 
     es.onerror = () => {
       setState((s) =>
-        s.isStreaming ? { ...s, error: "Connection to agent lost", isStreaming: false } : s
+        s.isStreaming
+          ? { ...s, error: "Connection to agent lost", isStreaming: false, pendingTool: null }
+          : s
       );
       es.close();
       esRef.current = null;

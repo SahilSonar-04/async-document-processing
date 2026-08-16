@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
 import { getAgentHistory } from "@/lib/api";
-import { formatRelative } from "@/lib/utils";
+import { formatRelative, cn } from "@/lib/utils";
 import type { AgentQueryHistoryItem } from "@/types";
 
 interface Props {
   refreshKey: number;
+  onSelect: (item: AgentQueryHistoryItem) => void;
+  activeId?: string | null;
 }
 
-export function AgentHistoryPanel({ refreshKey }: Props) {
+export function AgentHistoryPanel({ refreshKey, onSelect, activeId }: Props) {
   const [items, setItems] = useState<AgentQueryHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
-    getAgentHistory(10)
+    getAgentHistory(20)
       .then((res) => {
         if (!cancelled) setItems(res.items);
       })
@@ -32,33 +33,35 @@ export function AgentHistoryPanel({ refreshKey }: Props) {
     };
   }, [refreshKey]);
 
-  if (loading || !items.length) return null;
+  if (loading) {
+    return <p className="px-3 py-2 text-xs text-tertiary">Loading…</p>;
+  }
+
+  if (!items.length) {
+    return <p className="px-3 py-2 text-xs text-tertiary">No questions yet.</p>;
+  }
 
   return (
-    <div className="mt-4 rounded-lg border border-gray-200 bg-white">
-      <div className="px-3 py-2 text-xs font-medium text-gray-500 border-b border-gray-100">
-        Recent agent questions
-      </div>
-      <ul className="divide-y divide-gray-100">
-        {items.map((item) => (
-          <li key={item.id}>
-            <button
-              onClick={() => setExpanded(expanded === item.id ? null : item.id)}
-              className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between gap-2"
-            >
-              <span className="truncate">{item.question}</span>
-              <span className="text-gray-400 flex-shrink-0">
-                {formatRelative(item.created_at)}
-              </span>
-            </button>
-            {expanded === item.id && (
-              <div className="px-3 pb-3 text-xs text-gray-600 whitespace-pre-wrap">
-                {item.answer}
-              </div>
+    <ul className="flex flex-col gap-0.5">
+      {items.map((item) => (
+        <li key={item.id}>
+          <button
+            onClick={() => onSelect(item)}
+            className={cn(
+              "w-full rounded-md px-3 py-2 text-left text-xs transition-colors",
+              activeId === item.id
+                ? "bg-surface-raised text-primary"
+                : "text-secondary hover:bg-surface-raised hover:text-primary"
             )}
-          </li>
-        ))}
-      </ul>
-    </div>
+          >
+            <p className="truncate">{item.question}</p>
+            <p className="mt-0.5 font-mono text-[10px] text-tertiary">
+              {formatRelative(item.created_at)} · {item.steps_taken} step
+              {item.steps_taken !== 1 ? "s" : ""}
+            </p>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

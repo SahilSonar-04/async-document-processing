@@ -9,16 +9,11 @@ interface Props {
 export function StatusBadge({ status, className }: Props) {
   const cfg = STATUS_CONFIG[status];
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
-        cfg.bg,
-        cfg.color,
-        className
-      )}
-    >
-      <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", cfg.dot)} />
-      {cfg.label}
+    <span className={cn("inline-flex items-center gap-1.5", className)}>
+      <span className={cn("h-1.5 w-1.5 flex-shrink-0 rounded-full", cfg.dot)} />
+      <span className={cn("font-mono text-[11px] uppercase tracking-wide", cfg.color)}>
+        {cfg.label}
+      </span>
     </span>
   );
 }

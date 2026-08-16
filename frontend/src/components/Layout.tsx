@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { useRouter } from "next/router";
+import { LayoutGrid, Upload as UploadIcon, MessageSquare, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/authStore";
 
 const NAV_ITEMS = [
-  { href: "/",       label: "Dashboard",  icon: "⊞" },
-  { href: "/upload", label: "Upload",     icon: "↑" },
+  { href: "/", label: "Dashboard", icon: LayoutGrid },
+  { href: "/upload", label: "Upload", icon: UploadIcon },
+  { href: "/ask", label: "Ask", icon: MessageSquare },
 ];
-
-const FLOWER_URL = process.env.NEXT_PUBLIC_FLOWER_URL || "http://localhost:5555";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -21,65 +21,55 @@ export function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-14">
-            <Link href="/" className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-lg bg-brand-600 flex items-center justify-center text-white text-sm font-bold">
-                D
-              </span>
-              <span className="font-semibold text-gray-900 text-sm">DocFlow</span>
-            </Link>
+    <div className="flex min-h-screen flex-col bg-canvas">
+      <header className="sticky top-0 z-10 border-b border-subtle bg-canvas/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <Link href="/" className="flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-subtle font-mono text-xs font-semibold text-accent">
+              {"{ }"}
+            </span>
+            <span className="text-sm font-semibold text-primary">DocFlow</span>
+          </Link>
 
-            <nav className="flex items-center gap-1">
-              {NAV_ITEMS.map((item) => (
+          <nav className="flex items-center gap-1">
+            {NAV_ITEMS.map((item) => {
+              const active = router.pathname === item.href;
+              const Icon = item.icon;
+              return (
                 <Link
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors",
-                    router.pathname === item.href
-                      ? "bg-brand-50 text-brand-700 font-medium"
-                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    "relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors",
+                    active ? "text-primary" : "text-secondary hover:text-primary"
                   )}
                 >
-                  <span className="text-xs">{item.icon}</span>
+                  <Icon size={14} />
                   {item.label}
+                  {active && (
+                    <span className="absolute -bottom-[9px] left-1/2 h-0.5 w-4 -translate-x-1/2 rounded-full bg-accent" />
+                  )}
                 </Link>
-              ))}
+              );
+            })}
 
-              <a
-                href={FLOWER_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-600 hover:bg-gray-100"
-              >
-                <span className="text-xs">◉</span>
-                Flower
-              </a>
-
-              {user && (
-                <div className="flex items-center gap-2 pl-3 ml-2 border-l border-gray-200">
-                  <span className="text-sm text-gray-500 hidden sm:inline">
-                    {user.email}
-                  </span>
-                  <button
-                    onClick={handleLogout}
-                    className="px-3 py-1.5 text-sm text-gray-600 rounded-md hover:bg-gray-100"
-                  >
-                    Log out
-                  </button>
-                </div>
-              )}
-            </nav>
-          </div>
+            {user && (
+              <div className="ml-2 flex items-center gap-2 border-l border-subtle pl-3">
+                <span className="hidden font-mono text-xs text-tertiary sm:inline">{user.email}</span>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-secondary hover:bg-surface-raised hover:text-primary"
+                  title="Log out"
+                >
+                  <LogOut size={14} />
+                </button>
+              </div>
+            )}
+          </nav>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
-        {children}
-      </main>
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
     </div>
   );
 }

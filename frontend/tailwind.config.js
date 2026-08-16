@@ -1,23 +1,54 @@
-/** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],
   theme: {
     extend: {
       colors: {
-        brand: {
-          50:  "#f0f4ff",
-          100: "#e0e9ff",
-          200: "#c7d7fe",
-          400: "#818cf8",
-          500: "#6366f1",
-          600: "#4f46e5",
-          700: "#4338ca",
-          800: "#3730a3",
-          900: "#312e81",
+        canvas: "rgb(var(--bg-canvas) / <alpha-value>)",
+        surface: "rgb(var(--bg-surface) / <alpha-value>)",
+        "surface-raised": "rgb(var(--bg-surface-raised) / <alpha-value>)",
+        subtle: "rgb(var(--border-subtle) / <alpha-value>)",
+        strong: "rgb(var(--border-strong) / <alpha-value>)",
+        primary: "rgb(var(--text-primary) / <alpha-value>)",
+        secondary: "rgb(var(--text-secondary) / <alpha-value>)",
+        tertiary: "rgb(var(--text-tertiary) / <alpha-value>)",
+        accent: "rgb(var(--accent) / <alpha-value>)",
+        warn: "rgb(var(--warn) / <alpha-value>)",
+        danger: "rgb(var(--danger) / <alpha-value>)",
+        info: "rgb(var(--info) / <alpha-value>)",
+      },
+      fontFamily: {
+        sans: ["var(--font-sans)", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
+        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
+      },
+      borderRadius: {
+        sm: "6px",
+        DEFAULT: "8px",
+        lg: "10px",
+      },
+      keyframes: {
+        sweep: {
+          "0%": { transform: "translateX(-60%)" },
+          "100%": { transform: "translateX(220%)" },
+        },
+        "fade-up": {
+          "0%": { opacity: "0", transform: "translateY(4px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        blip: {
+          "0%": { transform: "scale(1)" },
+          "40%": { transform: "scale(1.015)" },
+          "100%": { transform: "scale(1)" },
+        },
+        flash: {
+          "0%": { backgroundColor: "rgb(var(--accent) / 0.16)" },
+          "100%": { backgroundColor: "transparent" },
         },
       },
       animation: {
-        "progress-pulse": "pulse 1.5s cubic-bezier(0.4,0,0.6,1) infinite",
+        sweep: "sweep 1.3s ease-in-out infinite",
+        "fade-up": "fade-up 160ms ease-out both",
+        blip: "blip 150ms ease-out",
+        flash: "flash 900ms ease-out",
       },
     },
   },

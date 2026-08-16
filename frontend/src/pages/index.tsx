@@ -1,33 +1,31 @@
 import Head from "next/head";
 import Link from "next/link";
+import { useEffect, useRef } from "react";
+import { FileText, Upload as UploadIcon } from "lucide-react";
 import { Layout } from "@/components/Layout";
-import { JobCard } from "@/components/JobCard";
+import { JobRow } from "@/components/JobRow";
 import { FiltersBar } from "@/components/FiltersBar";
 import { ExportBar } from "@/components/ExportBar";
+import { SkeletonList } from "@/components/SkeletonRow";
 import { Spinner } from "@/components/Spinner";
 import { useJobs } from "@/hooks/useJobs";
 import { useMultiSSE } from "@/hooks/useSSE";
 import { useJobStore } from "@/store/jobStore";
-import { useEffect, useRef } from "react";
 
 export default function Dashboard() {
   const { jobs, total, pages, isLoading, listError, refresh } = useJobs();
   const { currentPage, setCurrentPage } = useJobStore();
 
-  // Subscribe to SSE for all active (queued/processing) jobs
   const activeJobIds = jobs
     .filter((j) => j.status === "queued" || j.status === "processing")
     .map((j) => j.id);
   useMultiSSE(activeJobIds);
 
-  // ✅ FIX: Track which job IDs we've already scheduled a refresh for,
-  // so we don't schedule N refreshes as the `progress` object keeps updating.
   const refreshedJobs = useRef<Set<string>>(new Set());
-
   const progress = useJobStore((s) => s.progress);
+
   useEffect(() => {
     let needsRefresh = false;
-
     for (const [jobId, p] of Object.entries(progress)) {
       if (
         (p.event === "job_completed" || p.event === "job_failed") &&
@@ -37,9 +35,7 @@ export default function Dashboard() {
         needsRefresh = true;
       }
     }
-
     if (!needsRefresh) return;
-
     const timer = setTimeout(refresh, 1000);
     return () => clearTimeout(timer);
   }, [progress, refresh]);
@@ -48,103 +44,100 @@ export default function Dashboard() {
     <Layout>
       <Head>
         <title>Dashboard | DocFlow</title>
-        <meta name="description" content="Document processing dashboard - track all jobs" />
+        <meta name="description" content="Document processing dashboard" />
       </Head>
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {total} document{total !== 1 ? "s" : ""} total
+          <h1 className="text-xl font-semibold text-primary">Dashboard</h1>
+          <p className="mt-1 font-mono text-xs text-tertiary">
+            {total} document{total !== 1 ? "s" : ""}
+            {activeJobIds.length > 0 && (
+              <>
+                {" "}
+                · <span className="text-accent">{activeJobIds.length} processing</span>
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <ExportBar />
           <Link
             href="/upload"
-            className="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors"
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-canvas hover:opacity-90"
           >
             Upload files
           </Link>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="mb-5">
+      <div className="mb-4">
         <FiltersBar />
       </div>
 
-      {/* Job list */}
       {isLoading && jobs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 gap-3">
-          <Spinner className="w-8 h-8" />
-          {/* Helpful hint for Render free-tier cold starts (~30s wake time) */}
-          <p className="text-sm text-gray-400">
-            Loading… if this takes a moment, the server may be waking up.
-          </p>
-        </div>
+        <SkeletonList rows={6} />
       ) : listError ? (
-        <div className="text-center py-20">
-          <p className="text-red-600 text-sm mb-3">{listError}</p>
-          <button
-            onClick={refresh}
-            className="text-sm text-brand-600 hover:underline"
-          >
+        <div className="rounded-lg border border-subtle py-16 text-center">
+          <p className="mb-3 text-sm text-danger">{listError}</p>
+          <button onClick={refresh} className="text-sm text-accent hover:underline">
             Retry
           </button>
         </div>
       ) : jobs.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-3xl mx-auto mb-4">
-            📄
-          </div>
-          <p className="text-gray-500 mb-4">No documents yet</p>
+        <div className="rounded-lg border border-subtle py-20 text-center">
+          <FileText size={32} className="mx-auto mb-4 text-tertiary opacity-40" />
+          <p className="mb-4 text-sm text-secondary">No documents yet</p>
           <Link
             href="/upload"
-            className="text-sm text-brand-600 hover:underline"
+            className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
           >
+            <UploadIcon size={14} />
             Upload your first document
           </Link>
         </div>
       ) : (
         <>
-          <div className="grid gap-3">
-            {jobs.map((job) => (
-              <JobCard key={job.id} job={job} />
+          <div className="flex flex-col gap-2">
+            {jobs.map((job, i) => (
+              <div
+                key={job.id}
+                className="animate-fade-up"
+                style={{ animationDelay: `${Math.min(i, 10) * 20}ms` }}
+              >
+                <JobRow job={job} />
+              </div>
             ))}
           </div>
 
-          {/* Pagination */}
           {pages > 1 && (
-            <div className="flex items-center justify-center gap-2 mt-6">
+            <div className="mt-6 flex items-center justify-center gap-3">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                 disabled={currentPage <= 1}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="rounded-md border border-subtle px-3 py-1.5 text-sm text-secondary hover:text-primary disabled:cursor-not-allowed disabled:opacity-30"
               >
-                ← Prev
+                Prev
               </button>
-              <span className="text-sm text-gray-500">
-                Page {currentPage} of {pages}
+              <span className="font-mono text-xs text-tertiary">
+                Page {currentPage} / {pages}
               </span>
               <button
                 onClick={() => setCurrentPage(Math.min(pages, currentPage + 1))}
                 disabled={currentPage >= pages}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="rounded-md border border-subtle px-3 py-1.5 text-sm text-secondary hover:text-primary disabled:cursor-not-allowed disabled:opacity-30"
               >
-                Next →
+                Next
               </button>
             </div>
           )}
         </>
       )}
 
-      {/* Loading overlay for subsequent loads */}
       {isLoading && jobs.length > 0 && (
-        <div className="fixed bottom-6 right-6 bg-white shadow-lg rounded-full px-4 py-2 flex items-center gap-2 border border-gray-200">
-          <Spinner className="w-4 h-4" />
-          <span className="text-sm text-gray-600">Refreshing…</span>
+        <div className="fixed bottom-6 right-6 flex items-center gap-2 rounded-full border border-subtle bg-surface-raised px-3 py-1.5">
+          <Spinner className="h-3.5 w-3.5" />
+          <span className="text-xs text-secondary">Refreshing…</span>
         </div>
       )}
     </Layout>

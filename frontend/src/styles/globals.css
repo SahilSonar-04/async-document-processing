@@ -2,10 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
 :root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --bg-canvas: 10 10 11;
+  --bg-surface: 17 17 19;
+  --bg-surface-raised: 24 24 27;
+  --border-subtle: 38 38 42;
+  --border-strong: 58 58 64;
+  --text-primary: 237 237 239;
+  --text-secondary: 154 154 162;
+  --text-tertiary: 107 107 114;
+  --accent: 63 185 80;
+  --warn: 210 153 34;
+  --danger: 248 81 73;
+  --info: 88 166 255;
 }
 
 * {
@@ -15,38 +24,47 @@
 }
 
 html {
-  font-family: var(--font-sans);
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  @apply bg-gray-50 text-gray-900;
+  @apply bg-canvas text-primary;
   min-height: 100vh;
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   @apply bg-transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded-full;
+  @apply bg-subtle rounded-full;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400;
+  @apply bg-strong;
 }
 
 *:focus-visible {
-  @apply outline-none ring-2 ring-brand-400 ring-offset-2;
+  @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-canvas;
 }
 
 ::selection {
-  @apply bg-brand-200 text-brand-900;
+  @apply bg-accent/25 text-primary;
 }
 
 a, button, input, select, textarea {
   @apply transition-colors duration-150;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
