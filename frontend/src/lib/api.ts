@@ -164,11 +164,23 @@ export async function getAgentHistory(limit = 10): Promise<AgentHistoryResponse>
 
 // ── Export ────────────────────────────────────────────────────────────────────
 
-export function getExportUrl(format: "json" | "csv", finalizedOnly = false): string {
-  const base = process.env.NEXT_PUBLIC_API_URL
-    ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")}/api/v1`
-    : "/api/v1";
-  return `${base}/export/${format}?finalized_only=${finalizedOnly}`;
+export async function exportRecords(format: "json" | "csv", finalizedOnly = false): Promise<void> {
+  const { data } = await api.get(`/export/${format}`, {
+    params: { finalized_only: finalizedOnly },
+    responseType: "blob",
+  });
+
+  const blob = new Blob([data], {
+    type: format === "csv" ? "text/csv" : "application/json",
+  });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `docflow_export.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 export default api;
