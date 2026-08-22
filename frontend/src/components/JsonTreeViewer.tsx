@@ -1,3 +1,9 @@
+/**
+ * Interactive tree viewer component for exploring nested JSON payloads and diagnostics.
+ *
+ * @packageDocumentation
+ */
+
 import { useState } from "react";
 import { ChevronRight, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,6 +28,9 @@ function formatPrimitive(v: unknown): string {
   return String(v);
 }
 
+/**
+ * Recursive tree node rendering objects, arrays, and primitive JSON values.
+ */
 function Node({ label, value, depth }: { label: string | null; value: unknown; depth: number }) {
   const [open, setOpen] = useState(depth < 2);
   const isObject = value !== null && typeof value === "object";
@@ -69,7 +78,20 @@ function Node({ label, value, depth }: { label: string | null; value: unknown; d
   );
 }
 
-export function JsonTreeViewer({ data, title }: { data: unknown; title?: string }) {
+/**
+ * Props contract for the JsonTreeViewer component.
+ */
+interface JsonTreeViewerProps {
+  /** Arbitrary JSON object or array to render */
+  data: unknown;
+  /** Header title label (defaults to "JSON") */
+  title?: string;
+}
+
+/**
+ * Collapsible JSON tree viewer with clipboard copy support and syntax highlighting.
+ */
+export function JsonTreeViewer({ data, title }: JsonTreeViewerProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {

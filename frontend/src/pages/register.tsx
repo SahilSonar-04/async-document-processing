@@ -1,3 +1,9 @@
+/**
+ * User account registration view.
+ *
+ * @packageDocumentation
+ */
+
 import { useState } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
@@ -5,6 +11,9 @@ import Link from "next/link";
 import toast from "react-hot-toast";
 import { registerUser } from "@/lib/api";
 
+/**
+ * Registration form page creating new user accounts.
+ */
 export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

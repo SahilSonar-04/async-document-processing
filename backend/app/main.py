@@ -1,3 +1,10 @@
+"""Main FastAPI application entry point for DocFlow.
+
+This module initializes the FastAPI application instance, configures cross-origin
+resource sharing (CORS) middleware, and mounts API routers for authentication,
+document processing workflows, and the autonomous AI research agent.
+"""
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,7 +17,14 @@ from app.api.routes.agent import router as agent_router
 app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
-    description="Async Document Processing Workflow System",
+    description=(
+        "Production asynchronous document processing workflow and intelligence API. "
+        "Provides background document parsing, pgvector semantic indexing, "
+        "real-time SSE job tracking, and an autonomous ReAct document research agent."
+    ),
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 app.add_middleware(

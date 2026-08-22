@@ -1,5 +1,16 @@
+/**
+ * Animated SVG loading spinner indicator.
+ *
+ * @packageDocumentation
+ */
+
 import { cn } from "@/lib/utils";
 
+/**
+ * Animated circular loading spinner component.
+ *
+ * @param props - Custom CSS class overrides.
+ */
 export function Spinner({ className }: { className?: string }) {
   return (
     <svg

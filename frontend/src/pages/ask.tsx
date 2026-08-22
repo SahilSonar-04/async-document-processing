@@ -1,3 +1,9 @@
+/**
+ * Autonomous AI research assistant page supporting cross-document questions and streaming reasoning traces.
+ *
+ * @packageDocumentation
+ */
+
 import { useEffect, useRef, useState } from "react";
 import Head from "next/head";
 import { Send, PanelLeftClose, PanelLeft } from "lucide-react";
@@ -24,6 +30,9 @@ interface Message {
   llmCallCount: number;
 }
 
+/**
+ * Cross-document conversational research interface driven by the autonomous ReAct agent.
+ */
 export default function AskPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);

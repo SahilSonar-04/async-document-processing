@@ -1,10 +1,23 @@
+/**
+ * Visual progress bar indicator reflecting job completion percentage and status colors.
+ *
+ * @packageDocumentation
+ */
+
 import { cn } from "@/lib/utils";
 import type { JobStatus } from "@/types";
 
+/**
+ * Props contract for the ProgressBar component.
+ */
 interface Props {
+  /** Current progress percentage (0-100) */
   progress: number;
+  /** Current job status determining bar color theme */
   status: JobStatus;
+  /** Whether to render percentage numerical label */
   showLabel?: boolean;
+  /** Additional CSS class overrides */
   className?: string;
 }
 
@@ -16,6 +29,9 @@ const BAR_COLOR: Record<JobStatus, string> = {
   cancelled: "bg-tertiary",
 };
 
+/**
+ * Animated horizontal progress bar reflecting workflow stage advancement.
+ */
 export function ProgressBar({ progress, status, showLabel = false, className }: Props) {
   const clamped = Math.min(100, Math.max(0, progress));
 

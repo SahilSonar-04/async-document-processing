@@ -1,14 +1,29 @@
+/**
+ * Sidebar history panel listing past agent queries and enabling historical trace review.
+ *
+ * @packageDocumentation
+ */
+
 import { useEffect, useState } from "react";
 import { getAgentHistory } from "@/lib/api";
 import { formatRelative, cn } from "@/lib/utils";
 import type { AgentQueryHistoryItem } from "@/types";
 
+/**
+ * Props contract for the AgentHistoryPanel component.
+ */
 interface Props {
+  /** Numeric key incremented to trigger list refetch */
   refreshKey: number;
+  /** Callback invoked when a user clicks a historical query record */
   onSelect: (item: AgentQueryHistoryItem) => void;
+  /** Active query record ID to highlight */
   activeId?: string | null;
 }
 
+/**
+ * Historical query sidebar panel loading previous agent research interactions.
+ */
 export function AgentHistoryPanel({ refreshKey, onSelect, activeId }: Props) {
   const [items, setItems] = useState<AgentQueryHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);

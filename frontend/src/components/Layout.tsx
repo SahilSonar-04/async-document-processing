@@ -1,3 +1,9 @@
+/**
+ * Top-level application shell providing navigation bar, identity status, and layout framing.
+ *
+ * @packageDocumentation
+ */
+
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { LayoutGrid, Upload as UploadIcon, MessageSquare, LogOut } from "lucide-react";
@@ -10,7 +16,18 @@ const NAV_ITEMS = [
   { href: "/ask", label: "Ask", icon: MessageSquare },
 ];
 
-export function Layout({ children }: { children: React.ReactNode }) {
+/**
+ * Props contract for the main application Layout component.
+ */
+interface LayoutProps {
+  /** Page child nodes to render inside main container */
+  children: React.ReactNode;
+}
+
+/**
+ * Global responsive application layout with sticky header navigation and user session controls.
+ */
+export function Layout({ children }: LayoutProps) {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clearAuth);

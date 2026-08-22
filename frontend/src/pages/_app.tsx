@@ -1,3 +1,9 @@
+/**
+ * Next.js custom application component with font initialization, global styling, toast providers, and auth guards.
+ *
+ * @packageDocumentation
+ */
+
 import type { AppProps } from "next/app";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Toaster } from "react-hot-toast";
@@ -7,6 +13,9 @@ import "@/styles/globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
+/**
+ * Root Next.js application layout wrapper.
+ */
 export default function App({ Component, pageProps }: AppProps) {
   return (
     <div className={`${inter.variable} ${mono.variable}`}>

@@ -1,3 +1,12 @@
+/**
+ * HTTP API client for DocFlow backend services.
+ *
+ * Configures Axios with base URL handling, automatic JWT bearer token injection,
+ * 401 unauthenticated redirect interceptors, and typed API helper functions.
+ *
+ * @packageDocumentation
+ */
+
 import axios, { AxiosError } from "axios";
 import { useAuthStore } from "@/store/authStore";
 
@@ -59,8 +68,13 @@ api.interceptors.response.use(
   }
 );
 
-// ── Documents / Jobs ──────────────────────────────────────────────────────────
-
+/**
+ * Upload a single document for background processing.
+ *
+ * @param file - Selected File object to upload.
+ * @param extractionMode - Processing strategy ("classical" or "llm").
+ * @returns Promise resolving to the created document and job descriptor.
+ */
 export async function uploadDocument(
   file: File,
   extractionMode: "classical" | "llm" = "classical"
@@ -74,6 +88,13 @@ export async function uploadDocument(
   return data;
 }
 
+/**
+ * Upload multiple documents concurrently in a single multipart request.
+ *
+ * @param files - Array of File objects to upload.
+ * @param extractionMode - Processing strategy ("classical" or "llm").
+ * @returns Promise resolving to successful upload descriptors and any individual file errors.
+ */
 export async function uploadDocuments(
   files: File[],
   extractionMode: "classical" | "llm" = "classical"
@@ -87,6 +108,12 @@ export async function uploadDocuments(
   return data;
 }
 
+/**
+ * Fetch a paginated list of jobs matching search, status, and sort parameters.
+ *
+ * @param filters - Optional query parameters for filtering and pagination.
+ * @returns Promise resolving to the paginated jobs envelope.
+ */
 export async function listJobs(filters: JobFilters = {}): Promise<JobListResponse> {
   const params: Record<string, string | number> = {};
   if (filters.status)    params.status    = filters.status;
@@ -99,34 +126,69 @@ export async function listJobs(filters: JobFilters = {}): Promise<JobListRespons
   return data;
 }
 
+/**
+ * Retrieve full job details, target document attributes, and extraction results.
+ *
+ * @param jobId - UUID string of the target job.
+ * @returns Promise resolving to the Job model.
+ */
 export async function getJob(jobId: string): Promise<Job> {
   const { data } = await api.get<Job>(`/jobs/${jobId}`);
   return data;
 }
 
+/**
+ * Retry a failed or cancelled processing job.
+ *
+ * @param jobId - UUID string of the target job.
+ * @returns Promise resolving to the updated Job model.
+ */
 export async function retryJob(jobId: string): Promise<Job> {
   const { data } = await api.post<Job>(`/jobs/${jobId}/retry`);
   return data;
 }
 
-// ── Auth────────────────────────────────────────────────────────────
+/**
+ * Register a new user account with email and password.
+ *
+ * @param email - User email address.
+ * @param password - Plaintext password (8-128 chars).
+ * @returns Promise resolving to created user record.
+ */
 export async function registerUser(email: string, password: string) {
   const { data } = await api.post("/auth/register", { email, password });
   return data as { id: string; email: string; created_at: string };
 }
 
+/**
+ * Authenticate user credentials and retrieve a signed JWT token.
+ *
+ * @param email - User email address.
+ * @param password - Plaintext password.
+ * @returns Promise resolving to access token response.
+ */
 export async function loginUser(email: string, password: string) {
   const { data } = await api.post("/auth/login", { email, password });
   return data as { access_token: string; token_type: string };
 }
 
+/**
+ * Fetch profile information of the currently authenticated user.
+ *
+ * @returns Promise resolving to authenticated user details.
+ */
 export async function getMe() {
   const { data } = await api.get("/auth/me");
   return data as { id: string; email: string; created_at: string };
 }
 
-// ── Result editing ────────────────────────────────────────────────────────────
-
+/**
+ * Modify editable metadata fields of an unfinalized processing result.
+ *
+ * @param jobId - Target job UUID.
+ * @param update - Updated title, category, summary, or keywords.
+ * @returns Promise resolving to the updated ProcessingResult.
+ */
 export async function updateResult(
   jobId: string,
   update: ResultUpdateRequest
@@ -135,6 +197,12 @@ export async function updateResult(
   return data;
 }
 
+/**
+ * Lock a processing result against further user edits.
+ *
+ * @param jobId - Target job UUID.
+ * @returns Promise resolving to the finalized ProcessingResult.
+ */
 export async function finalizeResult(jobId: string): Promise<ProcessingResult> {
   const { data } = await api.post<ProcessingResult>(`/jobs/${jobId}/finalize`, {
     confirmed: true,
@@ -142,6 +210,13 @@ export async function finalizeResult(jobId: string): Promise<ProcessingResult> {
   return data;
 }
 
+/**
+ * Perform single-document RAG question answering against pgvector indexed chunks.
+ *
+ * @param jobId - Target job UUID.
+ * @param question - Natural language question string.
+ * @returns Promise resolving to answer text and source passage citations.
+ */
 export async function askDocument(
   jobId: string,
   question: string
@@ -150,11 +225,23 @@ export async function askDocument(
   return data;
 }
 
+/**
+ * Run synchronous autonomous agent reasoning across all user documents.
+ *
+ * @param question - Natural language research question.
+ * @returns Promise resolving to final answer and tool execution trace.
+ */
 export async function askAgent(question: string): Promise<AgentAnswerResponse> {
   const { data } = await api.post<AgentAnswerResponse>("/agent/ask", { question });
   return data;
 }
 
+/**
+ * Fetch historical agent research queries and tool traces.
+ *
+ * @param limit - Maximum historical queries to retrieve (default: 10).
+ * @returns Promise resolving to agent history response list.
+ */
 export async function getAgentHistory(limit = 10): Promise<AgentHistoryResponse> {
   const { data } = await api.get<AgentHistoryResponse>("/agent/history", {
     params: { limit },
@@ -162,8 +249,12 @@ export async function getAgentHistory(limit = 10): Promise<AgentHistoryResponse>
   return data;
 }
 
-// ── Export ────────────────────────────────────────────────────────────────────
-
+/**
+ * Download processed document records in CSV or JSON format as a file attachment.
+ *
+ * @param format - Export format identifier ("json" or "csv").
+ * @param finalizedOnly - Restrict export exclusively to finalized documents.
+ */
 export async function exportRecords(format: "json" | "csv", finalizedOnly = false): Promise<void> {
   const { data } = await api.get(`/export/${format}`, {
     params: { finalized_only: finalizedOnly },

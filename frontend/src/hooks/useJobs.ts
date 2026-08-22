@@ -1,7 +1,18 @@
+/**
+ * React hook for fetching and synchronizing paginated job listings with the global store.
+ *
+ * @packageDocumentation
+ */
+
 import { useEffect, useCallback } from "react";
 import { useJobStore } from "@/store/jobStore";
 import { listJobs } from "@/lib/api";
 
+/**
+ * Hook to automatically synchronize the jobs listing with current filter and pagination state.
+ *
+ * @returns Object containing current jobs list, pagination counts, loading/error states, and manual refresh trigger.
+ */
 export function useJobs() {
   const {
     filters,

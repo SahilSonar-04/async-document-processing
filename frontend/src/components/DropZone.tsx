@@ -1,3 +1,9 @@
+/**
+ * Drag-and-drop document upload interface with file validation and extraction mode selection.
+ *
+ * @packageDocumentation
+ */
+
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Upload as UploadIcon, X } from "lucide-react";
@@ -7,8 +13,13 @@ import { Spinner } from "@/components/Spinner";
 import toast from "react-hot-toast";
 import { useRouter } from "next/router";
 
+/**
+ * File item queued for upload with client-side validation error status.
+ */
 interface QueuedFile {
+  /** Selected browser File instance */
   file: File;
+  /** Validation error message if invalid, or null */
   error: string | null;
 }
 
@@ -17,6 +28,10 @@ const MODE_INFO: Record<"classical" | "llm", string> = {
   llm: "Gemini-powered — richer output, adds latency and cost.",
 };
 
+/**
+ * Interactive drag-and-drop file upload zone supporting multi-file queueing,
+ * format validation, extraction mode toggling, and batch job scheduling.
+ */
 export function DropZone() {
   const [queue, setQueue] = useState<QueuedFile[]>([]);
   const [uploading, setUploading] = useState(false);

@@ -1,18 +1,42 @@
+/**
+ * Presentation helpers, class name merge utilities, formatting functions, and validation constants.
+ *
+ * @packageDocumentation
+ */
+
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { formatDistanceToNow, format } from "date-fns";
 import type { JobStatus } from "@/types";
 
+/**
+ * Merge Tailwind CSS class names with clsx conditional syntax support and conflict resolution.
+ *
+ * @param inputs - Class names, boolean conditionals, or class dictionaries.
+ * @returns Merged deduplicated CSS class string.
+ */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Format a byte count into a human-readable string (B, KB, MB).
+ *
+ * @param bytes - Numeric byte count.
+ * @returns Formatted size string (e.g. "1.2 MB").
+ */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Format an ISO date string into a relative human-readable time interval (e.g. "5 minutes ago").
+ *
+ * @param dateStr - ISO formatted date string.
+ * @returns Relative time string or original string if parsing fails.
+ */
 export function formatRelative(dateStr: string): string {
   try {
     return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
@@ -21,6 +45,12 @@ export function formatRelative(dateStr: string): string {
   }
 }
 
+/**
+ * Format an ISO date string into a fixed calendar representation (e.g. "Aug 21, 2026 15:30").
+ *
+ * @param dateStr - ISO formatted date string.
+ * @returns Formatted date string or original string if parsing fails.
+ */
 export function formatDate(dateStr: string): string {
   try {
     return format(new Date(dateStr), "MMM d, yyyy HH:mm");
@@ -29,6 +59,9 @@ export function formatDate(dateStr: string): string {
   }
 }
 
+/**
+ * Visual badge styling configuration mapped by job status.
+ */
 export const STATUS_CONFIG: Record<
   JobStatus,
   { label: string; color: string; bg: string; dot: string }
@@ -65,6 +98,9 @@ export const STATUS_CONFIG: Record<
   },
 };
 
+/**
+ * Human-readable descriptive labels for document pipeline stages.
+ */
 export const STAGE_LABELS: Record<string, string> = {
   queued: "Waiting in queue",
   started: "Job started",
@@ -80,9 +116,22 @@ export const STAGE_LABELS: Record<string, string> = {
   failed: "Failed",
 };
 
+/**
+ * List of permitted file extensions for client-side dropzone validation.
+ */
 export const ALLOWED_EXTENSIONS = ["pdf", "txt", "csv", "json", "md", "docx"];
+
+/**
+ * Maximum allowed file upload size in megabytes.
+ */
 export const MAX_FILE_SIZE_MB = 50;
 
+/**
+ * Validate a candidate file against allowed extensions and size limits.
+ *
+ * @param file - Selected File instance to validate.
+ * @returns Error message string if invalid, or null if validation passes.
+ */
 export function validateFile(file: File): string | null {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!ALLOWED_EXTENSIONS.includes(ext)) {

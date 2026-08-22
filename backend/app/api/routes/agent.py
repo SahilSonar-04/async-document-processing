@@ -1,5 +1,8 @@
+"""Autonomous AI document research agent API endpoints."""
+
 import json
 import uuid
+from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -22,12 +25,30 @@ from app.services.agent import AgentError, get_agent_history, run_agent, run_age
 router = APIRouter()
 
 
-@router.post("/agent/ask", response_model=AgentAnswerResponse)
+@router.post(
+    "/agent/ask",
+    response_model=AgentAnswerResponse,
+    summary="Execute synchronous AI document research query",
+    description="Runs the autonomous ReAct agent to search and reason across user documents synchronously.",
+)
 async def agent_ask(
     request: QuestionRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> AgentAnswerResponse:
+    """Execute autonomous document research agent query synchronously.
+
+    Args:
+        request: Natural language research question payload.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        AgentAnswerResponse: Final synthesized answer, tool execution trace, and metrics.
+
+    Raises:
+        HTTPException: 503 if agent reasoning or LLM service fails.
+    """
     try:
         result = await run_agent(db, current_user.id, request.question)
     except AgentError as exc:
@@ -45,19 +66,31 @@ async def agent_ask(
     )
 
 
-@router.get("/agent/ask/stream")
+@router.get(
+    "/agent/ask/stream",
+    summary="Stream real-time agent reasoning steps via SSE",
+    description="Streams ReAct reasoning and tool invocation events as they occur in real-time.",
+)
 async def agent_ask_stream(
-    question: str = Query(..., min_length=3, max_length=1000),
-    token: str | None = Query(None),
+    question: str = Query(..., min_length=3, max_length=1000, description="Natural language question"),
+    token: str | None = Query(None, description="JWT authentication token for EventSource"),
     db: AsyncSession = Depends(get_db),
-):
-    """
-    SSE variant of POST /agent/ask. Streams reasoning_started / tool_call_started /
-    tool_call_completed / tool_call_failed / final_answer / error events as the
-    agent's ReAct loop produces them.
+) -> StreamingResponse:
+    """Stream real-time Server-Sent Events (SSE) from the agent ReAct reasoning loop.
 
-    EventSource can't set an Authorization header, so — same pattern as
-    /jobs/{id}/progress — auth is passed as a query param and validated here.
+    Emits `reasoning_started`, `tool_call_started`, `tool_call_completed`, `tool_call_failed`,
+    `final_answer`, and `error` events.
+
+    Args:
+        question: Natural language question.
+        token: Query-parameter JWT token for EventSource authentication.
+        db: Active asynchronous database session.
+
+    Returns:
+        StreamingResponse: Text/event-stream response stream.
+
+    Raises:
+        HTTPException: 401 Unauthorized if token is missing or invalid.
     """
     subject = decode_access_token(token) if token else None
     if not subject:
@@ -74,7 +107,7 @@ async def agent_ask_stream(
     def _sse(payload: dict) -> str:
         return f"data: {json.dumps(payload)}\n\n"
 
-    async def event_generator():
+    async def event_generator() -> AsyncGenerator[str, None]:
         try:
             async for event in run_agent_stream(db, user_id, question):
                 yield _sse(event)
@@ -92,12 +125,27 @@ async def agent_ask_stream(
     )
 
 
-@router.get("/agent/history", response_model=AgentHistoryResponse)
+@router.get(
+    "/agent/history",
+    response_model=AgentHistoryResponse,
+    summary="List past agent research query logs",
+    description="Retrieves chronological audit log of research queries and tool execution traces.",
+)
 async def agent_history(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of historical queries to return"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> AgentHistoryResponse:
+    """Retrieve historical agent queries for the authenticated user.
+
+    Args:
+        limit: Maximum query records to return.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        AgentHistoryResponse: List of historical agent queries with tool traces.
+    """
     records = await get_agent_history(db, current_user.id, limit)
     return AgentHistoryResponse(
         items=[

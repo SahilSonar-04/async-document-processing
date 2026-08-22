@@ -1,3 +1,14 @@
+"""High-level document processing service and database orchestration.
+
+This module provides the core business service `DocumentService` handling:
+- Multipart document ingestion, path security validation, and Celery task dispatch.
+- Paginated job retrieval with filtering and sorting.
+- Job retry handling with automatic retry counter increments.
+- Processing result modifications and finalization locks.
+- Single-document question answering backed by pgvector similarity matching.
+- Bulk export data aggregation for CSV and JSON formats.
+"""
+
 import os
 import time
 import uuid
@@ -24,6 +35,7 @@ UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
 class DocumentService:
+    """Service layer managing document lifecycles, storage, job workflows, and RAG Q&A."""
 
     MAX_BULK_FILES = MAX_BULK_FILES
 
@@ -31,6 +43,24 @@ class DocumentService:
     async def upload_document(
         file: UploadFile, db: AsyncSession, user_id: uuid.UUID, extraction_mode: str = "classical"
     ) -> tuple[Document, Job]:
+        """Stream an uploaded file to storage, register Document & Job entities, and queue Celery task.
+
+        Validates extraction mode, sanitizes filenames to prevent path traversal attacks,
+        enforces extension and payload size constraints, writes to storage with chunked I/O,
+        and dispatches the background task.
+
+        Args:
+            file: FastAPI UploadFile handle.
+            db: Active asynchronous database session.
+            user_id: Authenticated user UUID.
+            extraction_mode: Extraction strategy ("classical" or "llm").
+
+        Returns:
+            tuple[Document, Job]: Newly created Document and Job database entities.
+
+        Raises:
+            HTTPException: 422 for invalid mode, 400 for invalid/oversized file, 500 for storage errors.
+        """
         if extraction_mode not in {"classical", "llm"}:
             raise HTTPException(
                 status_code=422,
@@ -125,6 +155,21 @@ class DocumentService:
         sort_by: str,
         sort_dir: str,
     ) -> JobListResponse:
+        """Fetch a paginated list of document processing jobs matching search and filter criteria.
+
+        Args:
+            db: Active asynchronous database session.
+            user_id: Authenticated user UUID.
+            page: 1-based page index.
+            page_size: Maximum records per page.
+            status: Optional JobStatus filter.
+            search: Optional substring match on document filename or file extension.
+            sort_by: Sort column attribute name (created_at, updated_at, status, progress).
+            sort_dir: Sort direction ("asc" or "desc").
+
+        Returns:
+            JobListResponse: Paginated results envelope with total count and page metadata.
+        """
         query = (
             select(Job)
             .options(selectinload(Job.document))
@@ -167,6 +212,19 @@ class DocumentService:
 
     @staticmethod
     async def get_job_detail(job_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Job:
+        """Retrieve full details of a specific job, including related document and extraction result.
+
+        Args:
+            job_id: Target job UUID.
+            user_id: Authenticated user UUID for ownership verification.
+            db: Active asynchronous database session.
+
+        Returns:
+            Job: Loaded Job entity with relations.
+
+        Raises:
+            HTTPException: 404 if job does not exist or does not belong to the user.
+        """
         query = (
             select(Job)
             .options(selectinload(Job.document), selectinload(Job.result))
@@ -181,6 +239,19 @@ class DocumentService:
 
     @staticmethod
     async def retry_job(job_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Job:
+        """Retry a failed or cancelled job, incrementing retry count and queuing Celery task.
+
+        Args:
+            job_id: Target job UUID.
+            user_id: Authenticated user UUID.
+            db: Active asynchronous database session.
+
+        Returns:
+            Job: Updated Job entity in QUEUED status.
+
+        Raises:
+            HTTPException: 400 if job is currently running or completed.
+        """
         job = await DocumentService.get_job_detail(job_id, user_id, db)
 
         if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
@@ -221,6 +292,20 @@ class DocumentService:
     async def update_result(
         job_id: uuid.UUID, user_id: uuid.UUID, update: ResultUpdateRequest, db: AsyncSession
     ) -> ProcessingResult:
+        """Update fields on an unfinalized extraction result.
+
+        Args:
+            job_id: Target job UUID.
+            user_id: Authenticated user UUID.
+            update: Partial update payload with new title, summary, category, or keywords.
+            db: Active asynchronous database session.
+
+        Returns:
+            ProcessingResult: Updated result entity.
+
+        Raises:
+            HTTPException: 404 if result not found, 400 if result has been finalized.
+        """
         await DocumentService.get_job_detail(job_id, user_id, db)
 
         query = select(ProcessingResult).where(ProcessingResult.job_id == job_id)
@@ -240,6 +325,19 @@ class DocumentService:
 
     @staticmethod
     async def finalize_result(job_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> ProcessingResult:
+        """Lock an extraction result against future edits.
+
+        Args:
+            job_id: Target job UUID.
+            user_id: Authenticated user UUID.
+            db: Active asynchronous database session.
+
+        Returns:
+            ProcessingResult: Finalized result entity.
+
+        Raises:
+            HTTPException: 404 if result not found, 400 if already finalized.
+        """
         await DocumentService.get_job_detail(job_id, user_id, db)
 
         query = select(ProcessingResult).where(ProcessingResult.job_id == job_id)
@@ -260,6 +358,23 @@ class DocumentService:
     async def ask_document(
         job_id: uuid.UUID, user_id: uuid.UUID, question: str, db: AsyncSession
     ) -> DocumentAnswerResponse:
+        """Answer a natural language question scoped to a single processed document.
+
+        Queries the pgvector embedding index for top-5 most similar passages and generates
+        a factual grounded answer using Google Gemini.
+
+        Args:
+            job_id: Target job UUID.
+            user_id: Authenticated user UUID.
+            question: Natural language question.
+            db: Active asynchronous database session.
+
+        Returns:
+            DocumentAnswerResponse: Answer text, passage citations, latency, and LLM call counts.
+
+        Raises:
+            HTTPException: 409 if processing is incomplete or unindexed, 503 if LLM is unavailable.
+        """
         started_at = time.perf_counter()
 
         job = await DocumentService.get_job_detail(job_id, user_id, db)
@@ -330,6 +445,16 @@ class DocumentService:
     async def get_export_data(
         db: AsyncSession, user_id: uuid.UUID, finalized_only: bool = False
     ) -> list[ExportRecord]:
+        """Aggregate completed document records for batch export into CSV or JSON formats.
+
+        Args:
+            db: Active asynchronous database session.
+            user_id: Authenticated user UUID.
+            finalized_only: If True, restricts export exclusively to finalized documents.
+
+        Returns:
+            list[ExportRecord]: Flattened export records.
+        """
         query = (
             select(Job)
             .options(selectinload(Job.document), selectinload(Job.result))
@@ -364,4 +489,3 @@ class DocumentService:
                 )
             )
         return records
-    

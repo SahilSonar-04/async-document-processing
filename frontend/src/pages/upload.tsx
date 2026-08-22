@@ -1,8 +1,17 @@
+/**
+ * Document upload view featuring drag-and-drop dropzone, mode selection, and pipeline guides.
+ *
+ * @packageDocumentation
+ */
+
 import Head from "next/head";
 import { Info } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { DropZone } from "@/components/DropZone";
 
+/**
+ * File ingestion page enabling single and batch document uploads.
+ */
 export default function UploadPage() {
   return (
     <Layout>

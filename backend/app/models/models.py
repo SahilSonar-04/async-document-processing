@@ -1,3 +1,14 @@
+"""SQLAlchemy database models for DocFlow.
+
+This module defines ORM models and relationships for:
+- User accounts and authentication credentials
+- Ingested documents and fallback file storage
+- Asynchronous processing jobs and status lifecycles
+- Extracted document metadata and structured summaries
+- Vector-indexed document chunks with pgvector embeddings
+- Autonomous AI research agent query traces and audit logs
+"""
+
 import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
@@ -14,6 +25,7 @@ from app.db.base import Base
 
 
 class JobStatus(str, PyEnum):
+    """Lifecycle status states for document processing jobs."""
     QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -22,6 +34,15 @@ class JobStatus(str, PyEnum):
 
 
 class User(Base):
+    """User account entity.
+
+    Attributes:
+        id: Primary key UUID.
+        email: Unique user email address used for login.
+        hashed_password: Argon2 or bcrypt password hash.
+        created_at: Timestamp when user registered.
+        documents: Collection of documents uploaded by this user.
+    """
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -33,6 +54,22 @@ class User(Base):
 
 
 class Document(Base):
+    """Uploaded document record and metadata.
+
+    Attributes:
+        id: Primary key UUID.
+        filename: Unique sanitized internal storage filename.
+        original_filename: User-provided original filename.
+        file_type: Lowercase file extension (e.g. "pdf", "csv").
+        file_size: Size of uploaded file in bytes.
+        storage_path: Absolute filesystem path to stored file.
+        file_content: Optional raw binary backup for ephemeral disk environments.
+        uploaded_at: Ingestion timestamp.
+        user_id: Foreign key referencing the owning user.
+        user: Relationship to the owning User model.
+        job: One-to-one relationship to the associated processing Job.
+        chunks: Vector-embedded chunk passages created during processing.
+    """
     __tablename__ = "documents"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -61,6 +98,24 @@ class Document(Base):
 
 
 class Job(Base):
+    """Asynchronous background processing job lifecycle tracking.
+
+    Attributes:
+        id: Primary key UUID.
+        document_id: Foreign key referencing the target Document.
+        celery_task_id: Active Celery task UUID string.
+        status: Current processing state enum (QUEUED, PROCESSING, COMPLETED, FAILED, CANCELLED).
+        progress: Completion percentage (0 to 100).
+        current_stage: Descriptive processing stage identifier.
+        error_message: Error details if processing failed.
+        retry_count: Number of times this job has been retried.
+        extraction_mode: Metadata extraction strategy ("classical" or "llm").
+        created_at: Initial job creation timestamp.
+        updated_at: Last progress or status modification timestamp.
+        completed_at: Final completion or termination timestamp.
+        document: Relationship back to the target Document.
+        result: One-to-one relationship to extracted ProcessingResult.
+    """
     __tablename__ = "jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -97,6 +152,25 @@ class Job(Base):
 
 
 class ProcessingResult(Base):
+    """Structured extraction results and metadata derived from document processing.
+
+    Attributes:
+        id: Primary key UUID.
+        job_id: Foreign key referencing the parent Job.
+        title: Extracted or inferred document title.
+        category: Classified category (document, text, data, documentation, other).
+        summary: Concise natural language summary.
+        keywords: JSON array of extracted key phrases.
+        word_count: Total word count in extracted text.
+        language: Detected ISO language code (e.g., "en", "es").
+        extracted_text: Cleaned extracted text snippet.
+        raw_json: Full JSON payload containing processing metadata and diagnostics.
+        is_finalized: Whether result has been locked against further edits.
+        finalized_at: Timestamp when result was locked.
+        edited_at: Timestamp of latest user edit.
+        created_at: Timestamp when record was created.
+        job: Relationship back to the parent Job.
+    """
     __tablename__ = "processing_results"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -132,6 +206,17 @@ class ProcessingResult(Base):
 
 
 class DocumentChunk(Base):
+    """Document passage chunk and 768-dimensional vector embedding for semantic search.
+
+    Attributes:
+        id: Primary key UUID.
+        document_id: Foreign key referencing the parent Document.
+        chunk_index: Sequential zero-based index of the passage within the document.
+        content: Text content of the chunk passage.
+        embedding: 768-dimensional pgvector float embedding.
+        created_at: Embedding generation timestamp.
+        document: Relationship back to the parent Document.
+    """
     __tablename__ = "document_chunks"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -154,6 +239,19 @@ class DocumentChunk(Base):
 
 
 class AgentQuery(Base):
+    """Audit log and trace history of autonomous AI research agent executions.
+
+    Attributes:
+        id: Primary key UUID.
+        user_id: Foreign key referencing the user who initiated the query.
+        question: User's original natural language research question.
+        answer: Final synthesized plain-text answer produced by the agent.
+        tool_trace: Complete chronological JSON trace of tools executed, inputs, and results.
+        steps_taken: Number of ReAct tool calling iterations executed.
+        latency_ms: Total execution duration in milliseconds.
+        llm_call_count: Total LLM inference invocations during the reasoning loop.
+        created_at: Execution timestamp.
+    """
     __tablename__ = "agent_queries"
 
     id: Mapped[uuid.UUID] = mapped_column(

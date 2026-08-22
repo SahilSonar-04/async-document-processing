@@ -1,3 +1,9 @@
+/**
+ * User login authentication view.
+ *
+ * @packageDocumentation
+ */
+
 import { useState } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
@@ -6,6 +12,9 @@ import toast from "react-hot-toast";
 import { loginUser, getMe } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 
+/**
+ * Login form page managing user authentication credentials and storing JWT tokens.
+ */
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

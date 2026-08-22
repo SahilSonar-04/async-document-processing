@@ -1,3 +1,12 @@
+"""Autonomous ReAct document research agent implementation using Google GenAI SDK.
+
+This module coordinates multi-step document reasoning:
+- ReAct loop driven by Gemini function calling with bounded iterations (`MAX_STEPS = 4`).
+- Real-time Server-Sent Events (SSE) streaming of reasoning steps, tool dispatches, and final answers.
+- Fallback non-streaming executor (`run_agent`).
+- Persistent query trace logging into the `agent_queries` table for historical auditability.
+"""
+
 import asyncio
 import time
 import uuid
@@ -87,6 +96,14 @@ _TOOL_DECLARATIONS = [
 
 @dataclass
 class AgentStep:
+    """Represents an individual tool call executed during agent reasoning.
+
+    Attributes:
+        tool: Identifier of the tool executed.
+        args: Input argument dictionary provided by the model.
+        result: Output payload returned by the tool execution.
+        error: Error message string if tool execution failed.
+    """
     tool: str
     args: dict[str, Any]
     result: Any = None
@@ -95,6 +112,14 @@ class AgentStep:
 
 @dataclass
 class AgentResult:
+    """Final result container from an agent execution session.
+
+    Attributes:
+        answer: Synthesized final natural language answer.
+        steps: Chronological list of tool invocation steps.
+        latency_ms: Total elapsed time in milliseconds.
+        llm_call_count: Total LLM completions generated during the session.
+    """
     answer: str
     steps: list[AgentStep] = field(default_factory=list)
     latency_ms: int = 0
@@ -102,12 +127,21 @@ class AgentResult:
 
 
 class AgentError(RuntimeError):
+    """Raised when agent configuration, reasoning, or tool dispatching fails."""
     pass
 
 
 async def _persist_query(
     db: AsyncSession, user_id: uuid.UUID, question: str, result: AgentResult
 ) -> None:
+    """Record completed agent query execution trace in the database.
+
+    Args:
+        db: Active asynchronous database session.
+        user_id: Authenticated user UUID.
+        question: User's original prompt.
+        result: Completed agent result containing answer, steps, and metrics.
+    """
     record = AgentQuery(
         user_id=user_id,
         question=question,
@@ -127,6 +161,16 @@ async def _persist_query(
 async def get_agent_history(
     db: AsyncSession, user_id: uuid.UUID, limit: int = 20
 ) -> list[AgentQuery]:
+    """Fetch past agent query audit records for the authenticated user.
+
+    Args:
+        db: Active asynchronous database session.
+        user_id: Authenticated user UUID.
+        limit: Maximum records to return (default: 20).
+
+    Returns:
+        list[AgentQuery]: Ordered list of historical agent query records.
+    """
     query = (
         select(AgentQuery)
         .where(AgentQuery.user_id == user_id)
@@ -140,6 +184,20 @@ async def get_agent_history(
 async def _dispatch_tool(
     db: AsyncSession, user_id: uuid.UUID, name: str, args: dict[str, Any]
 ) -> Any:
+    """Route tool invocation requests to corresponding handler functions.
+
+    Args:
+        db: Active asynchronous database session.
+        user_id: Authenticated user UUID.
+        name: Name of tool requested by the model.
+        args: Argument dictionary provided by the model.
+
+    Returns:
+        Any: Tool execution output payload.
+
+    Raises:
+        AgentError: If tool name is unrecognized.
+    """
     if name == "search_document_chunks":
         return await agent_tools.search_document_chunks(
             db, uuid.UUID(args["document_id"]), user_id, args["query"]
@@ -164,6 +222,27 @@ async def _dispatch_tool(
 async def run_agent_stream(
     db: AsyncSession, user_id: uuid.UUID, question: str
 ) -> AsyncGenerator[dict[str, Any], None]:
+    """Execute the ReAct agent loop yielding real-time events for SSE streaming.
+
+    Yields events:
+    - `reasoning_started`: Indicates start of a reasoning iteration.
+    - `tool_call_started`: Dispatched before invoking a tool.
+    - `tool_call_completed`: Emitted upon successful tool execution.
+    - `tool_call_failed`: Emitted if tool execution encounters an error.
+    - `final_answer`: Emitted when model concludes reasoning with a final answer.
+    - `error`: Emitted on timeouts, unhandled exceptions, or loop divergence.
+
+    Args:
+        db: Active asynchronous database session.
+        user_id: Authenticated user UUID.
+        question: User's input prompt.
+
+    Yields:
+        dict[str, Any]: SSE event payload dictionary.
+
+    Raises:
+        AgentError: If reasoning times out, fails, or does not converge within `MAX_STEPS`.
+    """
     if not settings.gemini_api_key:
         raise AgentError("GEMINI_API_KEY is not configured")
 
@@ -273,6 +352,19 @@ async def run_agent_stream(
 
 
 async def run_agent(db: AsyncSession, user_id: uuid.UUID, question: str) -> AgentResult:
+    """Execute the agent synchronously by draining the streaming event generator.
+
+    Args:
+        db: Active asynchronous database session.
+        user_id: Authenticated user UUID.
+        question: User's input prompt.
+
+    Returns:
+        AgentResult: Completed answer, step trace, latency, and LLM call counts.
+
+    Raises:
+        AgentError: If the agent fails to converge or returns an error.
+    """
     steps: list[AgentStep] = []
     pending_args: dict[str, dict[str, Any]] = {}
     final_event: dict[str, Any] | None = None

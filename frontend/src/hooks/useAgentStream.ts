@@ -1,14 +1,30 @@
+/**
+ * React hook for streaming autonomous agent reasoning steps and tool execution traces over SSE.
+ *
+ * @packageDocumentation
+ */
+
 import { useCallback, useRef, useState } from "react";
 import { useAuthStore } from "@/store/authStore";
 import type { AgentStep, AgentStreamEvent } from "@/types";
 
+/**
+ * State container for an active or completed agent research session.
+ */
 interface AgentStreamState {
+  /** Whether the agent reasoning SSE stream is currently connected and processing */
   isStreaming: boolean;
+  /** Chronological list of completed tool calls */
   steps: AgentStep[];
+  /** Identifier of a tool call currently in progress */
   pendingTool: string | null;
+  /** Synthesized final answer */
   answer: string | null;
+  /** Total latency in milliseconds */
   latencyMs: number | null;
+  /** Total LLM completions generated */
   llmCallCount: number | null;
+  /** Error message if streaming failed */
   error: string | null;
 }
 
@@ -22,17 +38,32 @@ const initialState: AgentStreamState = {
   error: null,
 };
 
+/**
+ * Hook providing reactive streaming execution for the autonomous AI document research agent.
+ *
+ * Exposes the active execution state, a trigger function (`ask`), and a cancellation function (`stop`).
+ *
+ * @returns Combined agent streaming state and action handlers.
+ */
 export function useAgentStream() {
   const [state, setState] = useState<AgentStreamState>(initialState);
   const esRef = useRef<EventSource | null>(null);
   const pendingArgsRef = useRef<Map<string, Record<string, unknown>>>(new Map());
 
+  /**
+   * Abort the active agent reasoning stream.
+   */
   const stop = useCallback(() => {
     esRef.current?.close();
     esRef.current = null;
     setState((s) => ({ ...s, isStreaming: false }));
   }, []);
 
+  /**
+   * Start a streaming research session for a given natural language question.
+   *
+   * @param question - Natural language research query.
+   */
   const ask = useCallback((question: string) => {
     esRef.current?.close();
     pendingArgsRef.current.clear();

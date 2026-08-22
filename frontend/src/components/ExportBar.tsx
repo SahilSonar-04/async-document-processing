@@ -1,7 +1,16 @@
+/**
+ * Export controls toolbar component for initiating CSV and JSON bulk downloads.
+ *
+ * @packageDocumentation
+ */
+
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { exportRecords } from "@/lib/api";
 
+/**
+ * Toolbar component providing one-click export actions for JSON and CSV formats with finalization filters.
+ */
 export function ExportBar() {
   const [finalizedOnly, setFinalizedOnly] = useState(false);
   const [exporting, setExporting] = useState<"json" | "csv" | null>(null);

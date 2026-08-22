@@ -1,10 +1,12 @@
+"""Document upload, job lifecycle management, progress streaming, and data export endpoints."""
+
 import asyncio
 import csv
 import io
 import json
 import logging
 import uuid as uuid_lib
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, Query, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -13,7 +15,7 @@ from sqlalchemy import select
 
 from app.db.session import get_db
 from app.db.redis_client import get_async_redis, get_pubsub_channel, get_cached_job_status
-from app.models.models import JobStatus, Job, User, Document
+from app.models.models import JobStatus, Job, User, Document, ProcessingResult
 from app.schemas.schemas import (
     UploadResponse, JobListResponse, JobResponse,
     ResultUpdateRequest, ResultResponse,
@@ -24,12 +26,23 @@ from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.security import decode_access_token
 
-
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 async def _resolve_user_from_token(token: str | None, db: AsyncSession) -> uuid_lib.UUID:
+    """Validate Bearer query token for SSE event streaming endpoints where headers cannot be set.
+
+    Args:
+        token: Raw JWT access token string passed as a URL query parameter.
+        db: Active asynchronous database session.
+
+    Returns:
+        uuid_lib.UUID: Authenticated user UUID.
+
+    Raises:
+        HTTPException: 401 Unauthorized if token is absent, invalid, or user does not exist.
+    """
     subject = decode_access_token(token) if token else None
     if not subject:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
@@ -45,8 +58,29 @@ async def _resolve_user_from_token(token: str | None, db: AsyncSession) -> uuid_
     return user_uuid
 
 
-@router.get("/jobs/{job_id}/progress")
-async def stream_progress(job_id: str, token: str | None = Query(None), db: AsyncSession = Depends(get_db)):
+@router.get(
+    "/jobs/{job_id}/progress",
+    summary="Stream real-time job progress events via SSE",
+    description="Subscribes to Redis Pub/Sub (with database polling fallback) to stream processing progress.",
+)
+async def stream_progress(
+    job_id: str,
+    token: str | None = Query(None, description="JWT authentication token for EventSource"),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Stream Server-Sent Events (SSE) detailing real-time document processing progress.
+
+    Args:
+        job_id: Target job UUID string.
+        token: Query-parameter JWT token for EventSource authentication.
+        db: Active asynchronous database session.
+
+    Returns:
+        StreamingResponse: Text/event-stream SSE response with keep-alive pings.
+
+    Raises:
+        HTTPException: 400 for invalid job ID, 401 for unauthorized token, 404 if job not found.
+    """
     try:
         job_uuid = uuid_lib.UUID(job_id)
     except ValueError:
@@ -63,7 +97,7 @@ async def stream_progress(job_id: str, token: str | None = Query(None), db: Asyn
     terminal_events = {"job_completed", "job_failed", "job_cancelled"}
     timeout = settings.sse_timeout
 
-    def _sse(payload: dict) -> str:
+    def _sse(payload: dict[str, Any]) -> str:
         return f"data: {json.dumps(payload)}\n\n"
 
     async def poll_generator() -> AsyncGenerator[str, None]:
@@ -84,7 +118,7 @@ async def stream_progress(job_id: str, token: str | None = Query(None), db: Asyn
             elapsed += poll_interval
             ping_counter += 1
 
-            event_payload: dict | None = None
+            event_payload: dict[str, Any] | None = None
 
             if redis:
                 try:
@@ -207,52 +241,139 @@ async def stream_progress(job_id: str, token: str | None = Query(None), db: Asyn
     )
 
 
-@router.post("/jobs/{job_id}/retry", response_model=JobResponse)
-async def retry_job(job_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    import uuid
+@router.post(
+    "/jobs/{job_id}/retry",
+    response_model=JobResponse,
+    summary="Retry a failed or cancelled processing job",
+)
+async def retry_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Job:
+    """Retry a failed or cancelled document job.
+
+    Args:
+        job_id: Target job UUID string.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        Job: Re-queued Job record.
+    """
     try:
-        jid = uuid.UUID(job_id)
+        jid = uuid_lib.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job ID")
     return await DocumentService.retry_job(jid, current_user.id, db)
 
 
-@router.patch("/jobs/{job_id}/result", response_model=ResultResponse)
-async def update_result(job_id: str, update: ResultUpdateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    import uuid
+@router.patch(
+    "/jobs/{job_id}/result",
+    response_model=ResultResponse,
+    summary="Update unfinalized extraction results",
+)
+async def update_result(
+    job_id: str,
+    update: ResultUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProcessingResult:
+    """Modify editable fields of an unfinalized document processing result.
+
+    Args:
+        job_id: Target job UUID string.
+        update: Partial fields update payload.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        ProcessingResult: Updated result record.
+    """
     try:
-        jid = uuid.UUID(job_id)
+        jid = uuid_lib.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job ID")
     return await DocumentService.update_result(jid, current_user.id, update, db)
 
 
-@router.post("/jobs/{job_id}/finalize", response_model=ResultResponse)
-async def finalize_result(job_id: str, _: FinalizeRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    import uuid
+@router.post(
+    "/jobs/{job_id}/finalize",
+    response_model=ResultResponse,
+    summary="Lock extraction result against further modifications",
+)
+async def finalize_result(
+    job_id: str,
+    _: FinalizeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProcessingResult:
+    """Finalize and lock a document result against further edits.
+
+    Args:
+        job_id: Target job UUID string.
+        _: Confirmation payload.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        ProcessingResult: Finalized result record.
+    """
     try:
-        jid = uuid.UUID(job_id)
+        jid = uuid_lib.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job ID")
     return await DocumentService.finalize_result(jid, current_user.id, db)
 
 
-@router.post("/jobs/{job_id}/ask", response_model=DocumentAnswerResponse)
-async def ask_document(job_id: str, request: QuestionRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    import uuid
+@router.post(
+    "/jobs/{job_id}/ask",
+    response_model=DocumentAnswerResponse,
+    summary="Ask a question about a single processed document (RAG)",
+)
+async def ask_document(
+    job_id: str,
+    request: QuestionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DocumentAnswerResponse:
+    """Perform RAG question answering scoped to a single document.
+
+    Args:
+        job_id: Target job UUID string.
+        request: Natural language question.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        DocumentAnswerResponse: Grounded answer with passage citations.
+    """
     try:
-        jid = uuid.UUID(job_id)
+        jid = uuid_lib.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job ID")
     return await DocumentService.ask_document(jid, current_user.id, request.question, db)
 
 
-@router.get("/export/json")
+@router.get(
+    "/export/json",
+    summary="Export processed document records in JSON format",
+)
 async def export_json(
-    finalized_only: bool = Query(False),
+    finalized_only: bool = Query(False, description="Export only finalized documents"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> JSONResponse:
+    """Export processed documents for the authenticated user in JSON format.
+
+    Args:
+        finalized_only: Filter flag to restrict output to finalized records.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        JSONResponse: List of serialized export records.
+    """
     records = await DocumentService.get_export_data(
         db, current_user.id, finalized_only
     )
@@ -262,8 +383,25 @@ async def export_json(
     )
 
 
-@router.get("/export/csv")
-async def export_csv(finalized_only: bool = Query(False), db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+@router.get(
+    "/export/csv",
+    summary="Export processed document records as a downloadable CSV file",
+)
+async def export_csv(
+    finalized_only: bool = Query(False, description="Export only finalized documents"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Export processed documents for the authenticated user as a downloadable CSV file.
+
+    Args:
+        finalized_only: Filter flag to restrict output to finalized records.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        StreamingResponse: CSV file attachment stream.
+    """
     records = await DocumentService.get_export_data(db, current_user.id, finalized_only)
     output = io.StringIO()
     fieldnames = list(ExportRecord.model_fields.keys()) if not records else list(records[0].model_fields.keys())
@@ -281,18 +419,39 @@ async def export_csv(finalized_only: bool = Query(False), db: AsyncSession = Dep
     )
 
 
-@router.get("/health")
-async def health():
+@router.get(
+    "/health",
+    summary="Service health check",
+    description="Returns service health status for load balancers and monitoring agents.",
+)
+async def health() -> dict[str, str]:
+    """Return health check diagnostic response."""
     return {"status": "ok", "service": "docflow-api"}
 
 
-@router.post("/upload", response_model=UploadResponse, status_code=201)
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    status_code=201,
+    summary="Upload a single document for background processing",
+)
 async def upload_document(
-    file: UploadFile = File(...),
-    extraction_mode: str = Form("classical"),
+    file: UploadFile = File(..., description="Target document file to upload"),
+    extraction_mode: str = Form("classical", description="Extraction strategy: classical or llm"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> UploadResponse:
+    """Ingest a single document file and queue background processing job.
+
+    Args:
+        file: Multipart file payload.
+        extraction_mode: Strategy selector ("classical" or "llm").
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        UploadResponse: Created Document ID, Job ID, and initial status.
+    """
     document, job = await DocumentService.upload_document(file, db, current_user.id, extraction_mode)
     return UploadResponse(
         document_id=document.id,
@@ -303,13 +462,28 @@ async def upload_document(
     )
 
 
-@router.post("/upload/bulk", status_code=201)
+@router.post(
+    "/upload/bulk",
+    status_code=201,
+    summary="Upload multiple documents in a single multipart request",
+)
 async def upload_multiple(
-    files: list[UploadFile] = File(...),
-    extraction_mode: str = Form("classical"),
+    files: list[UploadFile] = File(..., description="List of document files to upload"),
+    extraction_mode: str = Form("classical", description="Extraction strategy: classical or llm"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> dict[str, Any]:
+    """Ingest multiple documents concurrently in a single batch request.
+
+    Args:
+        files: List of multipart file payloads (up to `MAX_BULK_FILES`).
+        extraction_mode: Strategy selector ("classical" or "llm").
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        dict[str, Any]: Uploaded job descriptors and any individual file errors.
+    """
     if extraction_mode not in {"classical", "llm"}:
         raise HTTPException(status_code=422, detail="extraction_mode must be either 'classical' or 'llm'")
     if len(files) > DocumentService.MAX_BULK_FILES:
@@ -330,25 +504,61 @@ async def upload_multiple(
     return {"uploaded": results, "errors": errors}
 
 
-@router.get("/jobs", response_model=JobListResponse)
+@router.get(
+    "/jobs",
+    response_model=JobListResponse,
+    summary="List paginated jobs with search and filter parameters",
+)
 async def list_jobs(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status: JobStatus | None = Query(None),
-    search: str | None = Query(None),
-    sort_by: str = Query("created_at"),
-    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    status: JobStatus | None = Query(None, description="Filter by JobStatus"),
+    search: str | None = Query(None, description="Search filename or extension"),
+    sort_by: str = Query("created_at", description="Field to sort by"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> JobListResponse:
+    """Retrieve paginated document jobs for the authenticated user.
+
+    Args:
+        page: Page number.
+        page_size: Number of items per page.
+        status: Optional JobStatus filter.
+        search: Optional filename substring query.
+        sort_by: Sort column.
+        sort_dir: Sort direction ("asc" or "desc").
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        JobListResponse: Paginated jobs envelope.
+    """
     return await DocumentService.list_jobs(db, current_user.id, page, page_size, status, search, sort_by, sort_dir)
 
 
-@router.get("/jobs/{job_id}", response_model=JobResponse)
-async def get_job(job_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    import uuid
+@router.get(
+    "/jobs/{job_id}",
+    response_model=JobResponse,
+    summary="Retrieve detailed information for a specific job",
+)
+async def get_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Job:
+    """Retrieve detailed information and results for a specific job.
+
+    Args:
+        job_id: Target job UUID string.
+        db: Active asynchronous database session.
+        current_user: Authenticated user entity.
+
+    Returns:
+        Job: Job record populated with Document and ProcessingResult relations.
+    """
     try:
-        jid = uuid.UUID(job_id)
+        jid = uuid_lib.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job ID")
     return await DocumentService.get_job_detail(jid, current_user.id, db)

@@ -1,3 +1,9 @@
+/**
+ * Table list row component displaying job metadata, file icon, progress bar, and status badge.
+ *
+ * @packageDocumentation
+ */
+
 import Link from "next/link";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ProgressBar } from "@/components/ProgressBar";
@@ -6,10 +12,17 @@ import { useJobStore } from "@/store/jobStore";
 import { formatBytes, formatRelative, STAGE_LABELS, cn } from "@/lib/utils";
 import type { JobListItem } from "@/types";
 
+/**
+ * Props contract for the JobRow component.
+ */
 interface Props {
+  /** Job summary item to render */
   job: JobListItem;
 }
 
+/**
+ * Interactive list row item representing a document processing job with live SSE progress bindings.
+ */
 export function JobRow({ job }: Props) {
   const liveProgress = useJobStore((s) => s.progress[job.id]);
 

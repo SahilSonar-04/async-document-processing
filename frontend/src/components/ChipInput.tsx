@@ -1,14 +1,30 @@
+/**
+ * Interactive tag/keyword chip input supporting keyboard additions and deletions.
+ *
+ * @packageDocumentation
+ */
+
 import { useState, KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/**
+ * Props contract for the ChipInput component.
+ */
 interface Props {
+  /** Array of active tag/keyword strings */
   values: string[];
+  /** Change callback invoked when tags are added or removed */
   onChange: (values: string[]) => void;
+  /** Whether the input is disabled (e.g. finalized results) */
   disabled?: boolean;
+  /** Input placeholder string */
   placeholder?: string;
 }
 
+/**
+ * Tag input component that turns comma or Enter keystrokes into removable tag chips.
+ */
 export function ChipInput({ values, onChange, disabled, placeholder = "Add keyword…" }: Props) {
   const [draft, setDraft] = useState("");
 

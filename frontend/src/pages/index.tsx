@@ -1,3 +1,9 @@
+/**
+ * Dashboard page displaying document jobs, filtering controls, SSE live progress, and export options.
+ *
+ * @packageDocumentation
+ */
+
 import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useRef } from "react";
@@ -12,6 +18,9 @@ import { useJobs } from "@/hooks/useJobs";
 import { useMultiSSE } from "@/hooks/useSSE";
 import { useJobStore } from "@/store/jobStore";
 
+/**
+ * Main dashboard view listing user document processing jobs with real-time SSE progress updates.
+ */
 export default function Dashboard() {
   const { jobs, total, pages, isLoading, listError, refresh } = useJobs();
   const { currentPage, setCurrentPage } = useJobStore();

@@ -1,3 +1,9 @@
+/**
+ * Detailed job view displaying live processing status, field editing, finalization, RAG Q&A, and raw JSON diagnostics.
+ *
+ * @packageDocumentation
+ */
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
@@ -24,6 +30,9 @@ function formatDocumentAnswer(answer: string) {
     .replace(/__(.*?)__/g, "$1");
 }
 
+/**
+ * Job detail page for inspecting processing progress, editing extracted metadata, and asking questions.
+ */
 export default function JobDetailPage() {
   const router = useRouter();
   const { id } = router.query;

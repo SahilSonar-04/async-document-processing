@@ -1,3 +1,10 @@
+"""Celery background tasks for asynchronous document processing pipeline.
+
+Orchestrates document parsing (PDF, DOCX, TXT, MD, CSV, JSON), field extraction
+(classical heuristics and Gemini LLM), semantic chunking, pgvector embedding,
+and real-time event broadcasting over Redis.
+"""
+
 import asyncio
 import time
 import json
@@ -5,6 +12,7 @@ import uuid
 import os
 import re
 import logging
+from typing import Any
 import chardet
 from collections import Counter
 from datetime import datetime, timezone
@@ -40,7 +48,8 @@ SyncSession = sessionmaker(bind=sync_engine, autoflush=False, autocommit=False)
 
 
 @worker_process_init.connect
-def _dispose_engine_after_fork(**kwargs):
+def _dispose_engine_after_fork(**kwargs: Any) -> None:
+    """Dispose parent connection pool after worker fork to prevent connection sharing."""
     sync_engine.dispose()
 
 
@@ -64,6 +73,7 @@ _FRAGMENT_WORD_LIMIT = 4
 
 
 def _emit(job_id: str, event: str, progress: int, stage: str, message: str = "") -> None:
+    """Publish a job progress payload to Redis Pub/Sub."""
     payload = {
         "job_id": job_id,
         "event": event,
@@ -78,7 +88,8 @@ def _emit(job_id: str, event: str, progress: int, stage: str, message: str = "")
         logger.warning("_emit failed for job %s: %s", job_id, e)
 
 
-def _update_job(session: Session, job_id: str, **kwargs) -> Job:
+def _update_job(session: Session, job_id: str, **kwargs: Any) -> Job:
+    """Update job fields in the database and commit immediately."""
     job = session.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise ValueError(f"Job {job_id} not found in database")
@@ -89,6 +100,7 @@ def _update_job(session: Session, job_id: str, **kwargs) -> Job:
 
 
 def _restore_file_from_db_backup(session: Session, path: str, document_id: str) -> bool:
+    """Restore document binary from database if local storage was cleared on container restart."""
     document = session.query(Document).filter(Document.id == document_id).first()
     if not document or not document.file_content:
         return False
@@ -107,6 +119,7 @@ def _restore_file_from_db_backup(session: Session, path: str, document_id: str) 
 def _extract_text_from_file(
     path: str, file_type: str, session: Session, document_id: str
 ) -> str:
+    """Extract plain text from disk, using appropriate parser for the file format."""
     if not os.path.exists(path):
         restored = _restore_file_from_db_backup(session, path, document_id)
         if not restored:
@@ -156,10 +169,11 @@ def _extract_text_from_file(
 
 
 def _normalize_text(text: str) -> str:
+    """Standardize bullet points, strip whitespace, and join dangling sentence fragments."""
     units: list[str] = []
     buffer = ""
 
-    def flush():
+    def flush() -> None:
         nonlocal buffer
         if buffer:
             u = buffer.strip()
@@ -196,6 +210,7 @@ def _normalize_text(text: str) -> str:
 
 
 def _split_sentences(text: str) -> list[str]:
+    """Split text into sentences, merging fragments shorter than minimum word threshold."""
     raw_parts = [p.strip() for p in re.split(r"(?<=[.!?:])\s+", text.strip()) if p.strip()]
 
     merged: list[str] = []
@@ -208,6 +223,7 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def _summarize(text: str, max_sentences: int = 3) -> str:
+    """Generate extractive summary by scoring sentences against non-stopword frequency distribution."""
     sentences = _split_sentences(text)
     if len(sentences) <= max_sentences:
         return " ".join(sentences)
@@ -239,6 +255,7 @@ def _summarize(text: str, max_sentences: int = 3) -> str:
 
 
 def _rake_keywords(text: str, max_keywords: int = 10) -> list[str]:
+    """Extract candidate key phrases using word co-occurrence degrees (RAKE algorithm)."""
     sentences = _split_sentences(text)
     if not sentences:
         return []
@@ -289,6 +306,7 @@ def _rake_keywords(text: str, max_keywords: int = 10) -> list[str]:
 
 
 def _detect_language(text: str) -> str:
+    """Detect ISO 639-1 language code using N-gram profiles."""
     sample = text.strip()
     if len(sample) < 20:
         return "unknown"
@@ -298,7 +316,8 @@ def _detect_language(text: str) -> str:
         return "unknown"
 
 
-def _extract_fields(text: str, filename: str, file_type: str) -> dict:
+def _extract_fields(text: str, filename: str, file_type: str) -> dict[str, Any]:
+    """Derive baseline document metadata and summary via deterministic NLP heuristics."""
     stripped = re.sub(r"\[.*?\]", "", text).strip()
     normalized = _normalize_text(stripped)
     word_count = len(normalized.split())
@@ -331,9 +350,10 @@ def _extract_fields(text: str, filename: str, file_type: str) -> dict:
 
 
 class BaseTask(Task):
+    """Base Celery task handling global failure states, logging, and DB status rollback."""
     abstract = True
 
-    def on_failure(self, exc, task_id, args, kwargs, einfo):
+    def on_failure(self, exc: Exception, task_id: str, args: tuple, kwargs: dict, einfo: Any) -> None:
         job_id = args[0] if args else None
         document_id = args[1] if args and len(args) > 1 else None
         if not job_id:
@@ -369,13 +389,31 @@ class BaseTask(Task):
     default_retry_delay=60,
 )
 def process_document_task(
-    self,
+    self: Task,
     job_id: str,
     document_id: str,
     storage_path: str,
     original_filename: str,
     file_type: str,
-) -> dict:
+) -> dict[str, Any]:
+    """Execute asynchronous document ingestion and processing pipeline.
+
+    Workflow stages:
+    1. Parse raw text from disk (PDF, DOCX, TXT, CSV, JSON, MD).
+    2. Extract structured metadata & summary (heuristic or Gemini LLM).
+    3. Generate chunk embeddings and store in pgvector index.
+    4. Persist ProcessingResult and broadcast completion over Redis.
+
+    Args:
+        job_id: Unique job UUID string.
+        document_id: Unique document UUID string.
+        storage_path: Path to file on disk.
+        original_filename: Name of file when uploaded.
+        file_type: Extension (e.g. "pdf", "docx").
+
+    Returns:
+        dict: Execution status and extracted field dictionary.
+    """
     session: Session | None = None
     try:
         session = SyncSession()

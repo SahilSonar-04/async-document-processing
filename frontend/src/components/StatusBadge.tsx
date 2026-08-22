@@ -1,11 +1,25 @@
+/**
+ * Status indicator badge with color-coded dot and uppercase state label.
+ *
+ * @packageDocumentation
+ */
+
 import { cn, STATUS_CONFIG } from "@/lib/utils";
 import type { JobStatus } from "@/types";
 
+/**
+ * Props contract for the StatusBadge component.
+ */
 interface Props {
+  /** Target job status enum value */
   status: JobStatus;
+  /** Additional CSS class overrides */
   className?: string;
 }
 
+/**
+ * Visual badge displaying styled status indicator dot and label.
+ */
 export function StatusBadge({ status, className }: Props) {
   const cfg = STATUS_CONFIG[status];
   return (

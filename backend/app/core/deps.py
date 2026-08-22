@@ -1,3 +1,9 @@
+"""FastAPI dependency injection utilities for authentication and database sessions.
+
+This module provides dependencies that resolve the currently authenticated user
+from Bearer tokens in incoming HTTP requests.
+"""
+
 import uuid
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -15,6 +21,19 @@ async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    """Validate JWT bearer token from request headers and resolve the corresponding User entity.
+
+    Args:
+        token: Bearer token extracted automatically from the Authorization header.
+        db: Active asynchronous database session.
+
+    Returns:
+        User: SQLAlchemy model instance of the authenticated user.
+
+    Raises:
+        HTTPException: 401 Unauthorized if token is missing, expired, invalid,
+            or if the user record does not exist in the database.
+    """
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",

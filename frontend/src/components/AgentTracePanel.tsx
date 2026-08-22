@@ -1,10 +1,21 @@
+/**
+ * Diagnostic trace panel displaying real-time and completed agent tool calling steps.
+ *
+ * @packageDocumentation
+ */
+
 import { useState } from "react";
 import { Search, FileText, GitCompare, ListChecks, Files, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AgentStep } from "@/types";
 
+/**
+ * Props contract for the AgentTracePanel component.
+ */
 interface Props {
+  /** List of executed agent steps with input args and results */
   steps: AgentStep[];
+  /** Identifier of a tool currently executing in the background */
   pendingTool?: string | null;
 }
 
@@ -16,6 +27,9 @@ const TOOL_META: Record<string, { label: string; icon: typeof Search }> = {
   compare_documents: { label: "Compared two documents", icon: GitCompare },
 };
 
+/**
+ * Expandable tool execution chip presenting tool name, execution status, and formatted JSON output.
+ */
 function ToolChip({
   step,
   expanded,
@@ -58,6 +72,9 @@ function ToolChip({
   );
 }
 
+/**
+ * Diagnostic panel rendering chronological tool execution steps and live loading indicators.
+ */
 export function AgentTracePanel({ steps, pendingTool }: Props) {
   const [expanded, setExpanded] = useState<number | null>(null);
 

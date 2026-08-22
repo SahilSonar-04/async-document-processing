@@ -1,3 +1,9 @@
+/**
+ * React hooks for streaming real-time job progress over Server-Sent Events (SSE).
+ *
+ * @packageDocumentation
+ */
+
 import { useEffect, useRef } from "react";
 import { useJobStore } from "@/store/jobStore";
 import type { ProgressEvent, JobStatus } from "@/types";
@@ -5,6 +11,15 @@ import { useAuthStore } from "@/store/authStore";
 
 const TERMINAL_EVENTS = new Set(["job_completed", "job_failed", "job_cancelled"]);
 
+/**
+ * Subscribe to SSE progress updates for a single document processing job.
+ *
+ * Automatically updates global job state in `useJobStore` and closes the connection
+ * once a terminal event ("job_completed", "job_failed", "job_cancelled") is received.
+ *
+ * @param jobId - Target job UUID string, or null if disabled.
+ * @param enabled - Whether the EventSource subscription is active.
+ */
 export function useSSE(jobId: string | null, enabled = true) {
   const updateProgress = useJobStore((s) => s.updateProgress);
   const updateJobInList = useJobStore((s) => s.updateJobInList);
@@ -55,7 +70,7 @@ export function useSSE(jobId: string | null, enabled = true) {
           esRef.current = null;
         }
       } catch {
-        // ignore parse errors
+        // Handle malformed JSON event gracefully without throwing
       }
     };
 
@@ -74,6 +89,13 @@ export function useSSE(jobId: string | null, enabled = true) {
   }, [jobId, enabled]);
 }
 
+/**
+ * Concurrently subscribe to multiple active job SSE streams.
+ *
+ * Useful on listing views where multiple processing or queued jobs must update in parallel.
+ *
+ * @param jobIds - Array of active job UUID strings.
+ */
 export function useMultiSSE(jobIds: string[]) {
   const updateProgress = useJobStore((s) => s.updateProgress);
   const updateJobInList = useJobStore((s) => s.updateJobInList);
@@ -129,7 +151,7 @@ export function useMultiSSE(jobIds: string[]) {
             esRefs.current.delete(jobId);
           }
         } catch {
-          // ignore
+          // Handle malformed JSON event gracefully without throwing
         }
       };
 

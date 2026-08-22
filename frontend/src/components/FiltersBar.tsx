@@ -1,3 +1,9 @@
+/**
+ * Filtering and sorting bar for the jobs dashboard list view.
+ *
+ * @packageDocumentation
+ */
+
 import { Search, ArrowUpDown } from "lucide-react";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { useJobStore } from "@/store/jobStore";
@@ -18,6 +24,9 @@ const SORT_OPTIONS = [
   { value: "status", label: "Status" },
 ];
 
+/**
+ * Filter toolbar including substring search, status segmented controls, sort column selector, and sort order toggle.
+ */
 export function FiltersBar() {
   const { filters, setFilters } = useJobStore();
 

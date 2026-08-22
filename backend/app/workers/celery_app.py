@@ -1,3 +1,12 @@
+"""Celery distributed task queue configuration and initialization.
+
+This module sets up the Celery application instance with:
+- Redis message broker and result backend.
+- Late task acknowledgements (`task_acks_late=True`) to guarantee at-least-once delivery.
+- Fair worker scheduling (`worker_prefetch_multiplier=1`) to prevent queue monopolization.
+- Automatic connection retries and result expiration policies.
+"""
+
 from celery import Celery
 from app.core.config import settings
 
@@ -15,11 +24,11 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_acks_late=True,             # Ack only after successful processing
-    worker_prefetch_multiplier=1,    # One task at a time per worker process
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
     task_reject_on_worker_lost=True,
     task_default_retry_delay=60,
-    result_expires=86400,            # 24 hours
+    result_expires=86400,
     worker_send_task_events=True,
     task_send_sent_event=True,
     broker_connection_retry_on_startup=True,
